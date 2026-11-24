@@ -8,6 +8,14 @@ CREATE TABLE IF NOT EXISTS notes (
   body TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  deleted INTEGER NOT NULL DEFAULT 0
+  deleted INTEGER NOT NULL DEFAULT 0,
+  checklist TEXT NOT NULL DEFAULT '[]',
+  remind_at INTEGER NOT NULL DEFAULT 0,
+  images TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_notes_updated ON notes(updated_at);
+CREATE TABLE IF NOT EXISTS images (
+  id TEXT PRIMARY KEY,
+  data TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);

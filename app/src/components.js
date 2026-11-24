@@ -1,6 +1,8 @@
 import React from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
-import { TYPE_ICON, PRIO_COLOR, STATUSES, projectColor, ago } from "./constants";
+import { TYPE_ICON, PRIO_COLOR, STATUSES, projectColor, ago, fmtDateTime } from "./constants";
+
+const nowMs = () => Date.now();
 
 export function Chip({ label, active, onPress, color, t, small }) {
   const on = color || t.primary;
@@ -47,8 +49,12 @@ export function StatusBox({ status, onPress, t }) {
   );
 }
 
-export function NoteCard({ note, t, selected, selecting, onPress, onLongPress, onToggle }) {
+export function NoteCard({ note, t, selected, selecting, onPress, onLongPress, onToggle, trash }) {
   const done = note.status === "done";
+  const cl = note.checklist || [];
+  const clDone = cl.filter((c) => c.done).length;
+  const imgs = (note.images || []).length;
+  const overdue = note.remind_at && note.remind_at < nowMs() && !done;
   return (
     <TouchableOpacity
       activeOpacity={0.8}
@@ -62,7 +68,9 @@ export function NoteCard({ note, t, selected, selecting, onPress, onLongPress, o
     >
       <View style={[st.bar, { backgroundColor: PRIO_COLOR[note.priority] }]} />
       <View style={{ paddingLeft: 12, justifyContent: "flex-start", paddingTop: 14 }}>
-        {selecting ? (
+        {trash ? (
+          <Text style={{ fontSize: 20 }}>🗑</Text>
+        ) : selecting ? (
           <View style={[st.box, { borderColor: t.primary, backgroundColor: selected ? t.primary : "transparent" }]}>
             {selected && <Text style={{ color: "#fff", fontSize: 14, fontWeight: "700" }}>✓</Text>}
           </View>
@@ -94,6 +102,15 @@ export function NoteCard({ note, t, selected, selecting, onPress, onLongPress, o
           <Text style={{ color: t.sub, marginTop: 4, lineHeight: 20 }} numberOfLines={2}>
             {note.body}
           </Text>
+        )}
+        {(cl.length > 0 || imgs > 0 || !!note.remind_at) && (
+          <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 8, gap: 12 }}>
+            {cl.length > 0 && <Text style={{ color: clDone === cl.length ? t.ok : t.sub, fontSize: 12 }}>☑ {clDone}/{cl.length}</Text>}
+            {imgs > 0 && <Text style={{ color: t.sub, fontSize: 12 }}>🖼 {imgs}</Text>}
+            {!!note.remind_at && (
+              <Text style={{ color: overdue ? t.danger : t.sub, fontSize: 12 }}>⏰ {fmtDateTime(note.remind_at)}</Text>
+            )}
+          </View>
         )}
       </View>
     </TouchableOpacity>

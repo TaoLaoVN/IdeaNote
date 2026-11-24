@@ -11,8 +11,9 @@ import { requestWidgetUpdate } from "react-native-android-widget";
 import { QuickNoteWidget } from "./widget/QuickNote";
 import { useTheme } from "./src/theme";
 import {
-  KEY_NOTES, KEY_SETTINGS, KEY_SYNC, KEY_WIDGET_PROJECT, TYPES, PRIO_RANK, uid, projectColor, buildPrompt,
+  KEY_NOTES, KEY_SETTINGS, KEY_SYNC, KEY_WIDGET_PROJECT, TYPES, PRIO_RANK, TRASH_DAYS, uid, projectColor, buildPrompt,
 } from "./src/constants";
+import { rescheduleReminders } from "./src/reminders";
 import { mergeNotes, syncNotes } from "./src/sync";
 import { Chip, NoteCard } from "./src/components";
 import NoteEditor from "./src/NoteEditor";
@@ -42,6 +43,8 @@ function Main() {
   const [syncMsg, setSyncMsg] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [ready, setReady] = useState(false);
+  const [undo, setUndo] = useState(null); // { id, title }
+  const undoTimer = useRef(null);
 
   const notesRef = useRef([]);
   const settingsRef = useRef(settings);
@@ -69,6 +72,11 @@ function Main() {
   // Tự lưu vào máy mỗi khi ghi chú đổi
   useEffect(() => {
     if (ready) AsyncStorage.setItem(KEY_NOTES, JSON.stringify(notes));
+  }, [notes, ready]);
+
+  // Đặt lại lịch nhắc khi ghi chú đổi
+  useEffect(() => {
+    if (ready) rescheduleReminders(notes);
   }, [notes, ready]);
 
   const doSync = useCallback(async (cfgArg, quiet) => {
@@ -124,15 +132,22 @@ function Main() {
 
   const live = useMemo(() => notes.filter((n) => !n.deleted), [notes]);
 
+  const trashed = useMemo(
+    () => notes.filter((n) => n.deleted && n.updated_at > Date.now() - TRASH_DAYS * 86400000)
+      .sort((a, b) => b.updated_at - a.updated_at),
+    [notes]
+  );
+
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
+    if (status === "trash") return trashed;
     return live
       .filter((n) => !project || n.project === project)
       .filter((n) => !type || n.type === type)
       .filter((n) => (status === "all" ? true : status === "done" ? n.status === "done" : n.status !== "done"))
       .filter((n) => !q || `${n.title} ${n.body} ${n.project}`.toLowerCase().includes(q))
       .sort((a, b) => PRIO_RANK[a.priority] - PRIO_RANK[b.priority] || b.updated_at - a.updated_at);
-  }, [live, project, type, status, query]);
+  }, [live, trashed, project, type, status, query]);
 
   const openCount = live.filter((n) => n.status !== "done").length;
   const highBugs = live.filter((n) => n.status !== "done" && n.type === "bug" && n.priority === "high").length;
@@ -150,23 +165,30 @@ function Main() {
     doSync(undefined, true);
   };
 
-  const remove = (n) =>
-    Alert.alert("Xoá ghi chú?", n.title, [
-      { text: "Huỷ" },
-      {
-        text: "Xoá", style: "destructive",
-        onPress: () => {
-          commit((cur) => cur.map((x) => (x.id === n.id ? { ...x, deleted: true, updated_at: Date.now() } : x)));
-          setEditing(null);
-          doSync(undefined, true);
-        },
-      },
-    ]);
+  const setDeleted = (id, deleted) => {
+    commit((cur) => cur.map((x) => (x.id === id ? { ...x, deleted, updated_at: Date.now() } : x)));
+    doSync(undefined, true);
+  };
+
+  // Xoá ngay, cho phép hoàn tác trong vài giây (và khôi phục sau từ Thùng rác)
+  const remove = (n) => {
+    setDeleted(n.id, true);
+    setEditing(null);
+    clearTimeout(undoTimer.current);
+    setUndo({ id: n.id, title: n.title });
+    undoTimer.current = setTimeout(() => setUndo(null), 6000);
+  };
+
+  const undoDelete = () => {
+    if (undo) setDeleted(undo.id, false);
+    clearTimeout(undoTimer.current);
+    setUndo(null);
+  };
 
   const newNote = useCallback((noteType = "bug", proj) => {
     setEditing({
       id: uid(), project: proj ?? project, type: TYPES[noteType] ? noteType : "bug", priority: "medium",
-      status: "new", title: "", body: "", created_at: Date.now(), updated_at: Date.now(), deleted: false,
+      status: "new", title: "", body: "", checklist: [], remind_at: 0, images: [], created_at: Date.now(), updated_at: Date.now(), deleted: false,
     });
   }, [project]);
 
@@ -253,6 +275,7 @@ function Main() {
           <Chip t={t} small label="Đang mở" active={status === "open"} onPress={() => setStatus("open")} />
           <Chip t={t} small label="Đã xong" active={status === "done"} onPress={() => setStatus("done")} />
           <Chip t={t} small label="Tất cả" active={status === "all"} onPress={() => setStatus("all")} />
+          <Chip t={t} small label={`🗑 Thùng rác${trashed.length ? ` · ${trashed.length}` : ""}`} active={status === "trash"} onPress={() => setStatus("trash")} />
           <View style={{ width: 12 }} />
           <Chip t={t} small label="Mọi loại" active={!type} onPress={() => setType("")} />
           {Object.entries(TYPES).map(([k, v]) => (
@@ -280,12 +303,26 @@ function Main() {
         renderItem={({ item }) => (
           <NoteCard
             note={item} t={t} selecting={selecting} selected={selected.has(item.id)}
-            onPress={() => (selecting ? toggleSelect(item.id) : setEditing(item))}
-            onLongPress={() => toggleSelect(item.id)}
+            trash={status === "trash"}
+            onPress={() =>
+              status === "trash"
+                ? Alert.alert("Khôi phục ghi chú?", item.title, [{ text: "Huỷ" }, { text: "Khôi phục", onPress: () => setDeleted(item.id, false) }])
+                : selecting ? toggleSelect(item.id) : setEditing(item)
+            }
+            onLongPress={() => status !== "trash" && toggleSelect(item.id)}
             onToggle={() => toggle(item)}
           />
         )}
       />
+
+      {!!undo && (
+        <View style={[st.snack, { backgroundColor: t.card2 }]}>
+          <Text style={{ color: t.text, flex: 1 }} numberOfLines={1}>Đã xoá “{undo.title}”</Text>
+          <TouchableOpacity onPress={undoDelete} hitSlop={10}>
+            <Text style={{ color: t.primary, fontWeight: "700", marginLeft: 12 }}>HOÀN TÁC</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Hai nút thêm nhanh */}
       {!selecting && (
@@ -333,6 +370,7 @@ const st = StyleSheet.create({
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12 },
   icon: { fontSize: 22 },
   search: { borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10, fontSize: 15 },
+  snack: { position: "absolute", left: 16, right: 16, bottom: 92, flexDirection: "row", alignItems: "center", padding: 14, borderRadius: 12, elevation: 8 },
   bottom: { position: "absolute", left: 16, right: 16, bottom: 20, flexDirection: "row", gap: 12 },
   add: { flex: 1, alignItems: "center", paddingVertical: 16, borderRadius: 28, elevation: 6 },
   addText: { color: "#fff", fontSize: 16, fontWeight: "700" },

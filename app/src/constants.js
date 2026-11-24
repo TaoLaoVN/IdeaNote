@@ -35,7 +35,11 @@ export function buildPrompt(list) {
   const lines = list.map(
     (n, i) =>
       `${i + 1}. [${TYPES[n.type]}] [Ưu tiên ${PRIORITIES[n.priority]}]${n.project ? ` (${n.project})` : ""} ${n.title}` +
-      (n.body ? `\n   ${n.body.replace(/\n/g, "\n   ")}` : "")
+      (n.body ? `\n   ${n.body.replace(/\n/g, "\n   ")}` : "") +
+      (n.checklist && n.checklist.length
+        ? "\n" + n.checklist.map((c) => `   - [${c.done ? "x" : " "}] ${c.text}`).join("\n")
+        : "") +
+      (n.images && n.images.length ? `\n   (có ${n.images.length} ảnh chụp màn hình đính kèm trong app, không nằm trong prompt này)` : "")
   );
   const intro =
     list.length === 1
@@ -43,3 +47,7 @@ export function buildPrompt(list) {
       : "Dưới đây là danh sách bug và ý tưởng tôi ghi lại. Hãy xem code, đánh giá và xử lý lần lượt từ mục ưu tiên cao nhất. Với mỗi mục, nói rõ bạn định làm gì trước khi sửa.";
   return `${intro}\n\n${lines.join("\n\n")}`;
 }
+
+export const TRASH_DAYS = 30;
+export const fmtDateTime = (ms) =>
+  new Date(ms).toLocaleString("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" });

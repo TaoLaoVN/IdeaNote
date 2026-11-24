@@ -1,8 +1,10 @@
 import React, { useState } from "react";
-import { View, Text, TextInput, TouchableOpacity, Modal, ScrollView, KeyboardAvoidingView, Alert, StyleSheet } from "react-native";
+import { View, Text, TextInput, TouchableOpacity, Modal, ScrollView, KeyboardAvoidingView, Alert, Image, StyleSheet } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Clipboard from "expo-clipboard";
-import { TYPES, PRIORITIES, STATUSES, PRIO_COLOR, projectColor, buildPrompt } from "./constants";
+import { TYPES, PRIORITIES, STATUSES, PRIO_COLOR, projectColor, buildPrompt, uid, fmtDateTime } from "./constants";
+import { pickImages, imageUri, hasImage } from "./images";
+import { ensureReminderPermission } from "./reminders";
 import { Chip, Segment } from "./components";
 
 export default function NoteEditor({ note, projects, t, onSave, onCancel, onDelete }) {
@@ -15,6 +17,50 @@ export default function NoteEditor({ note, projects, t, onSave, onCancel, onDele
     await Clipboard.setStringAsync(buildPrompt([{ ...n, title: n.title.trim() || "(chưa có tiêu đề)" }]));
     Alert.alert("Đã chép", "Dán vào Claude Code để xử lý mục này.");
   };
+
+  const checklist = n.checklist || [];
+  const images = n.images || [];
+  const [newItem, setNewItem] = useState("");
+  const setItem = (id, patch) => set({ checklist: checklist.map((c) => (c.id === id ? { ...c, ...patch } : c)) });
+  const addItem = () => {
+    const text = newItem.trim();
+    if (!text) return;
+    set({ checklist: [...checklist, { id: uid(), text, done: false }] });
+    setNewItem("");
+  };
+
+  const addImages = async () => {
+    try {
+      const ids = await pickImages();
+      if (ids.length) set({ images: [...images, ...ids] });
+    } catch (e) {
+      Alert.alert("Không thêm được ảnh", String(e.message || e));
+    }
+  };
+  const removeImage = (id) =>
+    Alert.alert("Bỏ ảnh này khỏi ghi chú?", "", [
+      { text: "Huỷ" },
+      { text: "Bỏ ảnh", style: "destructive", onPress: () => set({ images: images.filter((x) => x !== id) }) },
+    ]);
+
+  const setReminder = async (ms) => {
+    if (ms && !(await ensureReminderPermission())) {
+      Alert.alert("Chưa được phép gửi thông báo", "Hãy bật thông báo cho IdeaNote trong cài đặt điện thoại để nhận nhắc việc.");
+    }
+    set({ remind_at: ms });
+  };
+  const at = (days, hour) => {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    d.setHours(hour, 0, 0, 0);
+    return d.getTime();
+  };
+  const reminderOptions = [
+    ["1 giờ nữa", () => Date.now() + 3600000],
+    ["Tối nay 20:00", () => (at(0, 20) > Date.now() ? at(0, 20) : at(1, 20))],
+    ["Sáng mai 8:00", () => at(1, 8)],
+    ["Tuần sau", () => at(7, 8)],
+  ];
 
   const input = [st.input, { backgroundColor: t.card2, color: t.text }];
 
@@ -55,6 +101,65 @@ export default function NoteEditor({ note, projects, t, onSave, onCancel, onDele
               value={n.body}
               onChangeText={(body) => set({ body })}
             />
+
+            <Text style={[st.label, { color: t.sub }]}>Checklist</Text>
+            {checklist.map((c) => (
+              <View key={c.id} style={st.row}>
+                <TouchableOpacity onPress={() => setItem(c.id, { done: !c.done })} hitSlop={8}>
+                  <Text style={{ fontSize: 22, color: c.done ? t.ok : t.sub }}>{c.done ? "☑" : "☐"}</Text>
+                </TouchableOpacity>
+                <TextInput
+                  style={{ flex: 1, color: c.done ? t.sub : t.text, fontSize: 16, marginHorizontal: 10, textDecorationLine: c.done ? "line-through" : "none" }}
+                  value={c.text}
+                  onChangeText={(text) => setItem(c.id, { text })}
+                />
+                <TouchableOpacity onPress={() => set({ checklist: checklist.filter((x) => x.id !== c.id) })} hitSlop={8}>
+                  <Text style={{ color: t.sub, fontSize: 18 }}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+            <View style={st.row}>
+              <TextInput
+                style={[...input, { flex: 1, marginBottom: 0 }]}
+                placeholder="+ Thêm việc nhỏ"
+                placeholderTextColor={t.sub}
+                value={newItem}
+                onChangeText={setNewItem}
+                onSubmitEditing={addItem}
+                blurOnSubmit={false}
+              />
+              <TouchableOpacity onPress={addItem} style={{ marginLeft: 10 }}>
+                <Text style={{ color: t.primary, fontWeight: "700", fontSize: 16 }}>Thêm</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={[st.label, { color: t.sub, marginTop: 16 }]}>Ảnh chụp màn hình</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }}>
+              {images.map((id) => (
+                <TouchableOpacity key={id} onLongPress={() => removeImage(id)} style={{ marginRight: 10 }}>
+                  {hasImage(id) ? (
+                    <Image source={{ uri: imageUri(id) }} style={st.thumb} />
+                  ) : (
+                    <View style={[st.thumb, { backgroundColor: t.card2, alignItems: "center", justifyContent: "center" }]}>
+                      <Text style={{ color: t.sub, fontSize: 11 }}>Đang tải…</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity onPress={addImages} style={[st.thumb, { backgroundColor: t.card2, alignItems: "center", justifyContent: "center" }]}>
+                <Text style={{ color: t.primary, fontSize: 28 }}>＋</Text>
+              </TouchableOpacity>
+            </ScrollView>
+
+            <Text style={[st.label, { color: t.sub }]}>
+              Nhắc việc{n.remind_at ? `: ${fmtDateTime(n.remind_at)}` : ""}
+            </Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 14 }}>
+              {reminderOptions.map(([label, fn]) => (
+                <Chip key={label} t={t} label={label} onPress={() => setReminder(fn())} />
+              ))}
+              {!!n.remind_at && <Chip t={t} label="Tắt nhắc" color={t.danger} active onPress={() => setReminder(0)} />}
+            </View>
 
             <Text style={[st.label, { color: t.sub }]}>App / game</Text>
             <TextInput
@@ -97,5 +202,7 @@ const st = StyleSheet.create({
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 16, paddingVertical: 14 },
   input: { borderRadius: 12, padding: 14, fontSize: 16, marginBottom: 14 },
   label: { marginBottom: 8, fontSize: 13, fontWeight: "600" },
+  row: { flexDirection: "row", alignItems: "center", marginBottom: 10 },
+  thumb: { width: 96, height: 96, borderRadius: 12 },
   btn: { alignItems: "center", padding: 14, borderRadius: 12, marginTop: 6 },
 });

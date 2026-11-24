@@ -22,3 +22,9 @@ Build xong EAS cho link tải APK, mở link trên điện thoại để cài.
 
 ## 3. Dùng
 Mở app, bấm ⚙️, nhập URL Worker và mã bí mật. Nút 📋 chép danh sách việc đang mở thành prompt để dán vào Claude Code.
+
+## Tính năng bổ sung
+- **Thùng rác + hoàn tác**: xoá là có nút "HOÀN TÁC" 6 giây; ghi chú đã xoá nằm trong bộ lọc 🗑 Thùng rác 30 ngày, bấm để khôi phục.
+- **Checklist** trong ghi chú (hiện tiến độ ☑ x/y trên thẻ, có trong prompt).
+- **Nhắc việc**: chọn nhanh 1 giờ / tối nay / sáng mai / tuần sau, báo bằng thông báo của điện thoại.
+- **Ảnh chụp màn hình**: đính kèm từ thư viện ảnh (tự thu nhỏ), đồng bộ qua server. Backend đã thêm cột mới và bảng `images` (đã deploy).

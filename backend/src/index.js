@@ -25,7 +25,12 @@ export default {
       )
         .bind(since)
         .all();
-      return json({ notes: results, now: Date.now() });
+      const notes = results.map((r) => ({
+        ...r,
+        checklist: JSON.parse(r.checklist || "[]"),
+        images: JSON.parse(r.images || "[]"),
+      }));
+      return json({ notes, now: Date.now() });
     }
 
     // POST /notes  body: { notes: [...] } -> upsert, bản có updated_at mới hơn thắng
@@ -33,12 +38,13 @@ export default {
       const body = await request.json();
       const list = Array.isArray(body.notes) ? body.notes : [];
       const stmt = env.DB.prepare(
-        `INSERT INTO notes (id, project, type, priority, status, title, body, created_at, updated_at, deleted)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO notes (id, project, type, priority, status, title, body, created_at, updated_at, deleted, checklist, remind_at, images)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            project=excluded.project, type=excluded.type, priority=excluded.priority,
            status=excluded.status, title=excluded.title, body=excluded.body,
-           updated_at=excluded.updated_at, deleted=excluded.deleted
+           updated_at=excluded.updated_at, deleted=excluded.deleted,
+           checklist=excluded.checklist, remind_at=excluded.remind_at, images=excluded.images
          WHERE excluded.updated_at > notes.updated_at`
       );
       if (list.length) {
@@ -54,12 +60,29 @@ export default {
               String(n.body || ""),
               Number(n.created_at || Date.now()),
               Number(n.updated_at || Date.now()),
-              n.deleted ? 1 : 0
+              n.deleted ? 1 : 0,
+              JSON.stringify(Array.isArray(n.checklist) ? n.checklist : []),
+              Number(n.remind_at || 0),
+              JSON.stringify(Array.isArray(n.images) ? n.images : [])
             )
           )
         );
       }
       return json({ ok: true, count: list.length });
+    }
+
+    // PUT /images/:id  body: { data: <base64> }   GET /images/:id -> { data }
+    const m = url.pathname.match(/^\/images\/([\w-]+)$/);
+    if (m && request.method === "PUT") {
+      const { data } = await request.json();
+      if (typeof data !== "string" || data.length > 1_500_000) return json({ error: "bad image" }, 400);
+      await env.DB.prepare("INSERT OR REPLACE INTO images (id, data, created_at) VALUES (?, ?, ?)")
+        .bind(m[1], data, Date.now()).run();
+      return json({ ok: true });
+    }
+    if (m && request.method === "GET") {
+      const row = await env.DB.prepare("SELECT data FROM images WHERE id = ?").bind(m[1]).first();
+      return row ? json({ data: row.data }) : json({ error: "not found" }, 404);
     }
 
     return json({ error: "not found" }, 404);
