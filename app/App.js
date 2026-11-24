@@ -1,160 +1,182 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import {
-  View, Text, TextInput, FlatList, TouchableOpacity, Modal, StyleSheet,
-  ScrollView, Alert, SafeAreaView, StatusBar, KeyboardAvoidingView, Platform, Linking,
+  View, Text, TextInput, FlatList, TouchableOpacity, StyleSheet, ScrollView, Alert,
+  StatusBar, Platform, Linking, AppState, RefreshControl,
 } from "react-native";
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Clipboard from "expo-clipboard";
 import { requestWidgetUpdate } from "react-native-android-widget";
+
 import { QuickNoteWidget } from "./widget/QuickNote";
-
-const KEY_NOTES = "ideanote:notes";
-const KEY_SETTINGS = "ideanote:settings";
-const KEY_SYNC = "ideanote:lastSync";
-
-const TYPES = { bug: "🐞 Bug", idea: "💡 Ý tưởng", improvement: "✨ Cải tiến" };
-const PRIORITIES = { high: "Cao", medium: "Vừa", low: "Thấp" };
-const STATUSES = { new: "Mới", doing: "Đang làm", done: "Xong" };
-const PRIO_COLOR = { high: "#ef4444", medium: "#f59e0b", low: "#22c55e" };
-
-const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+import { useTheme } from "./src/theme";
+import {
+  KEY_NOTES, KEY_SETTINGS, KEY_SYNC, KEY_WIDGET_PROJECT, TYPES, PRIO_RANK, uid, projectColor, buildPrompt,
+} from "./src/constants";
+import { mergeNotes, syncNotes } from "./src/sync";
+import { Chip, NoteCard } from "./src/components";
+import NoteEditor from "./src/NoteEditor";
+import SettingsModal from "./src/SettingsModal";
 
 export default function App() {
+  return (
+    <SafeAreaProvider>
+      <Main />
+    </SafeAreaProvider>
+  );
+}
+
+const NEXT = { new: "doing", doing: "done", done: "new" };
+
+function Main() {
+  const t = useTheme();
   const [notes, setNotes] = useState([]);
   const [settings, setSettings] = useState({ url: "", secret: "" });
-  const [filterProject, setFilterProject] = useState("");
-  const [filterStatus, setFilterStatus] = useState("open"); // open | all | done
+  const [project, setProject] = useState("");
+  const [status, setStatus] = useState("open"); // open | done | all
+  const [type, setType] = useState("");
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState(() => new Set());
   const [editing, setEditing] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [syncMsg, setSyncMsg] = useState("");
+  const [syncing, setSyncing] = useState(false);
   const [ready, setReady] = useState(false);
+
+  const notesRef = useRef([]);
+  const settingsRef = useRef(settings);
+  const busy = useRef(false);
+  settingsRef.current = settings;
+
+  // Mọi thay đổi ghi chú đi qua đây để ref và state luôn khớp nhau
+  const commit = useCallback((fn) => {
+    const next = fn(notesRef.current);
+    notesRef.current = next;
+    setNotes(next);
+    return next;
+  }, []);
 
   // Nạp dữ liệu lúc mở app
   useEffect(() => {
     (async () => {
-      const n = await AsyncStorage.getItem(KEY_NOTES);
-      const s = await AsyncStorage.getItem(KEY_SETTINGS);
-      if (n) setNotes(JSON.parse(n));
+      const [n, s] = await Promise.all([AsyncStorage.getItem(KEY_NOTES), AsyncStorage.getItem(KEY_SETTINGS)]);
+      if (n) commit((cur) => mergeNotes(JSON.parse(n), cur));
       if (s) setSettings(JSON.parse(s));
       setReady(true);
     })();
-  }, []);
+  }, [commit]);
 
-  // Tự lưu máy mỗi khi notes đổi, rồi làm mới widget để danh sách app luôn mới
+  // Tự lưu vào máy mỗi khi ghi chú đổi
   useEffect(() => {
-    if (!ready) return;
-    AsyncStorage.setItem(KEY_NOTES, JSON.stringify(notes)).then(() => {
-      if (Platform.OS === "android") {
-        requestWidgetUpdate({
-          widgetName: "QuickNote",
-          renderWidget: async () => {
-            const cur = (await AsyncStorage.getItem("ideanote:widgetProject")) || "";
-            return <QuickNoteWidget project={cur} />;
-          },
-        }).catch(() => {});
-      }
-    });
+    if (ready) AsyncStorage.setItem(KEY_NOTES, JSON.stringify(notes));
   }, [notes, ready]);
 
-  const sync = useCallback(async (current = notes, cfg = settings) => {
-    if (!cfg.url || !cfg.secret) { setSyncMsg("Chưa cài đặt server"); return; }
-    try {
-      setSyncMsg("Đang đồng bộ…");
-      const headers = { Authorization: `Bearer ${cfg.secret}`, "content-type": "application/json" };
-      const base = cfg.url.replace(/\/$/, "");
-      const last = Number((await AsyncStorage.getItem(KEY_SYNC)) || 0);
-
-      // 1) đẩy lên các ghi chú đã đổi từ lần sync trước
-      const dirty = current.filter((n) => n.updated_at > last);
-      if (dirty.length) {
-        const r = await fetch(`${base}/notes`, { method: "POST", headers, body: JSON.stringify({ notes: dirty }) });
-        if (!r.ok) throw new Error(`Đẩy lên lỗi ${r.status}`);
-      }
-      // 2) kéo về các thay đổi mới
-      const r2 = await fetch(`${base}/notes?since=${last}`, { headers });
-      if (!r2.ok) throw new Error(`Kéo về lỗi ${r2.status}`);
-      const { notes: remote, now } = await r2.json();
-
-      const map = new Map(current.map((n) => [n.id, n]));
-      for (const rn of remote) {
-        const local = map.get(rn.id);
-        if (!local || rn.updated_at > local.updated_at) {
-          map.set(rn.id, { ...rn, deleted: !!rn.deleted });
-        }
-      }
-      const merged = [...map.values()];
-      setNotes(merged);
-      await AsyncStorage.setItem(KEY_SYNC, String(now));
-      setSyncMsg("Đã đồng bộ ✓");
-    } catch (e) {
-      setSyncMsg("Lỗi: " + e.message);
+  const doSync = useCallback(async (cfgArg, quiet) => {
+    const cfg = cfgArg || settingsRef.current;
+    if (!cfg.url || !cfg.secret) {
+      if (!quiet) setSyncMsg("Chưa cài đặt đồng bộ (bấm ⚙️)");
+      return;
     }
-  }, [notes, settings]);
+    if (busy.current) return;
+    busy.current = true;
+    setSyncing(true);
+    try {
+      const { remote, pushed, pulled } = await syncNotes(notesRef.current, cfg);
+      commit((cur) => mergeNotes(cur, remote));
+      setSyncMsg(`Đã đồng bộ ✓ (↑${pushed} ↓${pulled})`);
+    } catch (e) {
+      setSyncMsg("Lỗi đồng bộ: " + e.message);
+    } finally {
+      busy.current = false;
+      setSyncing(false);
+    }
+  }, [commit]);
 
-  // Đồng bộ khi vừa nạp xong
-  useEffect(() => { if (ready) sync(); }, [ready]); // eslint-disable-line
+  // Đồng bộ khi mở app và mỗi lần quay lại app
+  useEffect(() => {
+    if (ready) doSync(undefined, true);
+  }, [ready, doSync]);
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (s) => s === "active" && doSync(undefined, true));
+    return () => sub.remove();
+  }, [doSync]);
 
-  const projects = useMemo(
-    () => [...new Set(notes.filter((n) => !n.deleted && n.project).map((n) => n.project))],
-    [notes]
-  );
+  const projects = useMemo(() => {
+    const count = {};
+    notes.forEach((n) => { if (!n.deleted && n.project) count[n.project] = (count[n.project] || 0) + (n.status === "done" ? 0 : 1); });
+    return Object.keys(count).sort((a, b) => count[b] - count[a]).map((name) => ({ name, open: count[name] }));
+  }, [notes]);
+  const projectNames = useMemo(() => projects.map((p) => p.name), [projects]);
+
+  // Làm mới widget khi danh sách app đổi
+  const projectsKey = projectNames.join("|");
+  useEffect(() => {
+    if (!ready || Platform.OS !== "android") return;
+    requestWidgetUpdate({
+      widgetName: "QuickNote",
+      renderWidget: async () => {
+        let cur = (await AsyncStorage.getItem(KEY_WIDGET_PROJECT)) || "";
+        if (cur && !projectNames.includes(cur)) cur = "";
+        return <QuickNoteWidget project={cur} />;
+      },
+    }).catch(() => {});
+  }, [projectsKey, ready]); // eslint-disable-line
+
+  const live = useMemo(() => notes.filter((n) => !n.deleted), [notes]);
 
   const visible = useMemo(() => {
-    const rank = { high: 0, medium: 1, low: 2 };
-    return notes
-      .filter((n) => !n.deleted)
-      .filter((n) => !filterProject || n.project === filterProject)
-      .filter((n) => filterStatus === "all" ? true : filterStatus === "done" ? n.status === "done" : n.status !== "done")
-      .sort((a, b) => rank[a.priority] - rank[b.priority] || b.updated_at - a.updated_at);
-  }, [notes, filterProject, filterStatus]);
+    const q = query.trim().toLowerCase();
+    return live
+      .filter((n) => !project || n.project === project)
+      .filter((n) => !type || n.type === type)
+      .filter((n) => (status === "all" ? true : status === "done" ? n.status === "done" : n.status !== "done"))
+      .filter((n) => !q || `${n.title} ${n.body} ${n.project}`.toLowerCase().includes(q))
+      .sort((a, b) => PRIO_RANK[a.priority] - PRIO_RANK[b.priority] || b.updated_at - a.updated_at);
+  }, [live, project, type, status, query]);
 
-  const saveNote = (n) => {
-    const now = Date.now();
-    const next = { ...n, updated_at: now };
-    const updated = notes.some((x) => x.id === n.id)
-      ? notes.map((x) => (x.id === n.id ? next : x))
-      : [...notes, next];
-    setNotes(updated);
+  const openCount = live.filter((n) => n.status !== "done").length;
+  const highBugs = live.filter((n) => n.status !== "done" && n.type === "bug" && n.priority === "high").length;
+
+  // ----- thao tác -----
+  const save = (n) => {
+    const next = { ...n, updated_at: Date.now() };
+    commit((cur) => (cur.some((x) => x.id === n.id) ? cur.map((x) => (x.id === n.id ? next : x)) : [...cur, next]));
     setEditing(null);
-    sync(updated);
+    doSync(undefined, true);
   };
 
-  const deleteNote = (n) => {
+  const toggle = (n) => {
+    commit((cur) => cur.map((x) => (x.id === n.id ? { ...x, status: NEXT[x.status], updated_at: Date.now() } : x)));
+    doSync(undefined, true);
+  };
+
+  const remove = (n) =>
     Alert.alert("Xoá ghi chú?", n.title, [
       { text: "Huỷ" },
-      { text: "Xoá", style: "destructive", onPress: () => {
-        const updated = notes.map((x) => x.id === n.id ? { ...x, deleted: true, updated_at: Date.now() } : x);
-        setNotes(updated); setEditing(null); sync(updated);
-      } },
+      {
+        text: "Xoá", style: "destructive",
+        onPress: () => {
+          commit((cur) => cur.map((x) => (x.id === n.id ? { ...x, deleted: true, updated_at: Date.now() } : x)));
+          setEditing(null);
+          doSync(undefined, true);
+        },
+      },
     ]);
-  };
 
-  // Xuất prompt để dán vào Claude Code khi ngồi PC
-  const exportPrompt = async () => {
-    const list = visible.filter((n) => n.status !== "done");
-    if (!list.length) { Alert.alert("Không có ghi chú nào để xuất"); return; }
-    const lines = list.map((n, i) =>
-      `${i + 1}. [${TYPES[n.type]}] [${PRIORITIES[n.priority]}]${n.project ? ` (${n.project})` : ""} ${n.title}` +
-      (n.body ? `\n   ${n.body.replace(/\n/g, "\n   ")}` : "")
-    );
-    const text = `Dưới đây là danh sách bug và ý tưởng tôi ghi lại. Hãy xem code, đánh giá và xử lý lần lượt từ mục ưu tiên cao nhất. Với mỗi mục, nói rõ bạn định làm gì trước khi sửa.\n\n${lines.join("\n\n")}`;
-    await Clipboard.setStringAsync(text);
-    Alert.alert("Đã sao chép", `${list.length} ghi chú đã được chép vào clipboard. Dán vào Claude Code.`);
-  };
-
-  const newNote = useCallback((type = "bug", project) =>
+  const newNote = useCallback((noteType = "bug", proj) => {
     setEditing({
-      id: uid(), project: project ?? filterProject, type: TYPES[type] ? type : "bug", priority: "medium", status: "new",
-      title: "", body: "", created_at: Date.now(), updated_at: Date.now(), deleted: false,
-    }), [filterProject]);
+      id: uid(), project: proj ?? project, type: TYPES[noteType] ? noteType : "bug", priority: "medium",
+      status: "new", title: "", body: "", created_at: Date.now(), updated_at: Date.now(), deleted: false,
+    });
+  }, [project]);
 
-  // Bấm widget màn hình chính -> deep link ideanote://new?type=bug -> mở thẳng màn hình ghi note
+  // Bấm widget màn hình chính -> ideanote://new?type=bug&project=...
   useEffect(() => {
     const open = (url) => {
       if (url && url.startsWith("ideanote://new")) {
-        const t = url.match(/type=(\w+)/);
-        const p = url.match(/project=([^&]*)/);
-        newNote(t ? t[1] : "bug", p ? decodeURIComponent(p[1]) : undefined);
+        const tm = url.match(/type=(\w+)/);
+        const pm = url.match(/project=([^&]*)/);
+        newNote(tm ? tm[1] : "bug", pm ? decodeURIComponent(pm[1]) : undefined);
       }
     };
     Linking.getInitialURL().then(open);
@@ -162,72 +184,144 @@ export default function App() {
     return () => sub.remove();
   }, [newNote]);
 
-  return (
-    <SafeAreaView style={s.root}>
-      <StatusBar barStyle="light-content" />
-      <View style={s.header}>
-        <Text style={s.h1}>IdeaNote</Text>
-        <View style={{ flexDirection: "row", gap: 14 }}>
-          <TouchableOpacity onPress={exportPrompt}><Text style={s.hIcon}>📋</Text></TouchableOpacity>
-          <TouchableOpacity onPress={() => sync()}><Text style={s.hIcon}>🔄</Text></TouchableOpacity>
-          <TouchableOpacity onPress={() => setShowSettings(true)}><Text style={s.hIcon}>⚙️</Text></TouchableOpacity>
-        </View>
-      </View>
-      {!!syncMsg && <Text style={s.sync}>{syncMsg}</Text>}
+  // Chọn nhiều để chép prompt
+  const selecting = selected.size > 0;
+  const toggleSelect = (id) =>
+    setSelected((s) => {
+      const nx = new Set(s);
+      nx.has(id) ? nx.delete(id) : nx.add(id);
+      return nx;
+    });
 
-      <View style={s.filters}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <Chip label="Tất cả dự án" active={!filterProject} onPress={() => setFilterProject("")} />
+  const copyPrompt = async () => {
+    const list = selecting ? visible.filter((n) => selected.has(n.id)) : visible.filter((n) => n.status !== "done");
+    if (!list.length) return Alert.alert("Không có ghi chú nào để chép");
+    await Clipboard.setStringAsync(buildPrompt(list));
+    setSelected(new Set());
+    Alert.alert("Đã chép", `${list.length} ghi chú đã vào clipboard. Dán vào Claude Code.`);
+  };
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }}>
+      <StatusBar barStyle={t.dark ? "light-content" : "dark-content"} backgroundColor={t.bg} />
+
+      {/* Header */}
+      {selecting ? (
+        <View style={st.header}>
+          <TouchableOpacity onPress={() => setSelected(new Set())} hitSlop={12}>
+            <Text style={{ color: t.sub, fontSize: 16 }}>✕ Bỏ chọn</Text>
+          </TouchableOpacity>
+          <Text style={{ color: t.text, fontWeight: "700", fontSize: 16 }}>{selected.size} đã chọn</Text>
+          <TouchableOpacity onPress={copyPrompt} hitSlop={12}>
+            <Text style={{ color: t.primary, fontWeight: "700", fontSize: 16 }}>📋 Chép</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <View style={st.header}>
+          <View>
+            <Text style={{ color: t.text, fontSize: 24, fontWeight: "800" }}>IdeaNote</Text>
+            <Text style={{ color: t.sub, fontSize: 13, marginTop: 2 }}>
+              {openCount} việc đang mở{highBugs ? ` · ${highBugs} bug ưu tiên cao` : ""}
+            </Text>
+          </View>
+          <View style={{ flexDirection: "row", gap: 18 }}>
+            <TouchableOpacity onPress={copyPrompt} hitSlop={8}><Text style={st.icon}>📋</Text></TouchableOpacity>
+            <TouchableOpacity onPress={() => doSync()} hitSlop={8}><Text style={[st.icon, syncing && { opacity: 0.4 }]}>🔄</Text></TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowSettings(true)} hitSlop={8}><Text style={st.icon}>⚙️</Text></TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* Tìm kiếm + bộ lọc */}
+      <View style={{ paddingHorizontal: 16 }}>
+        <TextInput
+          style={[st.search, { backgroundColor: t.card, color: t.text, borderColor: t.border }]}
+          placeholder="🔍 Tìm ghi chú…"
+          placeholderTextColor={t.sub}
+          value={query}
+          onChangeText={setQuery}
+          clearButtonMode="while-editing"
+        />
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 10 }}>
+          <Chip t={t} label="Tất cả app" active={!project} onPress={() => setProject("")} />
           {projects.map((p) => (
-            <Chip key={p} label={p} active={filterProject === p} onPress={() => setFilterProject(p)} />
+            <Chip key={p.name} t={t} label={`${p.name}${p.open ? ` · ${p.open}` : ""}`} color={projectColor(p.name)}
+              active={project === p.name} onPress={() => setProject(project === p.name ? "" : p.name)} />
           ))}
         </ScrollView>
-        <View style={{ flexDirection: "row", marginTop: 6 }}>
-          <Chip label="Đang mở" active={filterStatus === "open"} onPress={() => setFilterStatus("open")} />
-          <Chip label="Đã xong" active={filterStatus === "done"} onPress={() => setFilterStatus("done")} />
-          <Chip label="Tất cả" active={filterStatus === "all"} onPress={() => setFilterStatus("all")} />
-        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <Chip t={t} small label="Đang mở" active={status === "open"} onPress={() => setStatus("open")} />
+          <Chip t={t} small label="Đã xong" active={status === "done"} onPress={() => setStatus("done")} />
+          <Chip t={t} small label="Tất cả" active={status === "all"} onPress={() => setStatus("all")} />
+          <View style={{ width: 12 }} />
+          <Chip t={t} small label="Mọi loại" active={!type} onPress={() => setType("")} />
+          {Object.entries(TYPES).map(([k, v]) => (
+            <Chip key={k} t={t} small label={v} active={type === k} onPress={() => setType(type === k ? "" : k)} />
+          ))}
+        </ScrollView>
       </View>
+      {!!syncMsg && <Text style={{ color: t.sub, fontSize: 12, paddingHorizontal: 16, paddingBottom: 2 }}>{syncMsg}</Text>}
 
+      {/* Danh sách */}
       <FlatList
         data={visible}
         keyExtractor={(n) => n.id}
-        contentContainerStyle={{ padding: 12, paddingBottom: 100 }}
-        ListEmptyComponent={<Text style={s.empty}>Chưa có ghi chú. Bấm dấu + để thêm.</Text>}
+        contentContainerStyle={{ padding: 16, paddingBottom: 110 }}
+        keyboardShouldPersistTaps="handled"
+        refreshControl={<RefreshControl refreshing={syncing} onRefresh={() => doSync()} tintColor={t.sub} />}
+        ListEmptyComponent={
+          <View style={{ alignItems: "center", marginTop: 70 }}>
+            <Text style={{ fontSize: 44 }}>{query ? "🔍" : "📝"}</Text>
+            <Text style={{ color: t.sub, marginTop: 10, textAlign: "center", lineHeight: 22 }}>
+              {query ? "Không tìm thấy ghi chú nào." : "Chưa có ghi chú nào.\nBấm nút bên dưới để thêm bug hoặc ý tưởng."}
+            </Text>
+          </View>
+        }
         renderItem={({ item }) => (
-          <TouchableOpacity style={s.card} onPress={() => setEditing(item)}>
-            <View style={[s.bar, { backgroundColor: PRIO_COLOR[item.priority] }]} />
-            <View style={{ flex: 1 }}>
-              <Text style={s.meta}>
-                {TYPES[item.type]}{item.project ? `  ·  ${item.project}` : ""}  ·  {STATUSES[item.status]}
-              </Text>
-              <Text style={[s.title, item.status === "done" && s.done]}>{item.title}</Text>
-              {!!item.body && <Text style={s.body} numberOfLines={2}>{item.body}</Text>}
-            </View>
-          </TouchableOpacity>
+          <NoteCard
+            note={item} t={t} selecting={selecting} selected={selected.has(item.id)}
+            onPress={() => (selecting ? toggleSelect(item.id) : setEditing(item))}
+            onLongPress={() => toggleSelect(item.id)}
+            onToggle={() => toggle(item)}
+          />
         )}
       />
 
-      <TouchableOpacity style={s.fab} onPress={() => newNote("bug")}><Text style={s.fabText}>＋</Text></TouchableOpacity>
+      {/* Hai nút thêm nhanh */}
+      {!selecting && (
+        <View style={st.bottom} pointerEvents="box-none">
+          <TouchableOpacity style={[st.add, { backgroundColor: "#dc2626" }]} onPress={() => newNote("bug")}>
+            <Text style={st.addText}>🐞 Bug</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[st.add, { backgroundColor: t.primary }]} onPress={() => newNote("idea")}>
+            <Text style={st.addText}>💡 Ý tưởng</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {editing && (
         <NoteEditor
-          note={editing} projects={projects}
-          onSave={saveNote} onCancel={() => setEditing(null)}
-          onDelete={notes.some((x) => x.id === editing.id) ? () => deleteNote(editing) : null}
+          key={editing.id} note={editing} projects={projectNames} t={t}
+          onSave={save} onCancel={() => setEditing(null)}
+          onDelete={notes.some((x) => x.id === editing.id) ? () => remove(editing) : null}
         />
       )}
 
       {showSettings && (
         <SettingsModal
-          settings={settings}
+          settings={settings} notes={live} t={t}
           onClose={() => setShowSettings(false)}
+          onImport={(list) => {
+            commit((cur) => mergeNotes(cur, list.map((n) => ({ ...n, updated_at: Date.now() }))));
+            doSync(undefined, true);
+          }}
           onSave={async (cfg) => {
             setSettings(cfg);
+            settingsRef.current = cfg;
             await AsyncStorage.setItem(KEY_SETTINGS, JSON.stringify(cfg));
-            await AsyncStorage.removeItem(KEY_SYNC); // sync lại toàn bộ
+            await AsyncStorage.removeItem(KEY_SYNC); // đồng bộ lại toàn bộ với server mới
             setShowSettings(false);
-            sync(notes, cfg);
+            doSync(cfg);
           }}
         />
       )}
@@ -235,113 +329,11 @@ export default function App() {
   );
 }
 
-function Chip({ label, active, onPress }) {
-  return (
-    <TouchableOpacity onPress={onPress} style={[s.chip, active && s.chipOn]}>
-      <Text style={[s.chipText, active && { color: "#fff" }]}>{label}</Text>
-    </TouchableOpacity>
-  );
-}
-
-function Segment({ options, value, onChange }) {
-  return (
-    <View style={{ flexDirection: "row", marginBottom: 12 }}>
-      {Object.entries(options).map(([k, v]) => (
-        <Chip key={k} label={v} active={value === k} onPress={() => onChange(k)} />
-      ))}
-    </View>
-  );
-}
-
-function NoteEditor({ note, projects, onSave, onCancel, onDelete }) {
-  const [n, setN] = useState(note);
-  const set = (patch) => setN({ ...n, ...patch });
-  return (
-    <Modal animationType="slide" onRequestClose={onCancel}>
-      <SafeAreaView style={s.root}>
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-          <View style={s.header}>
-            <TouchableOpacity onPress={onCancel}><Text style={s.hIcon}>✕</Text></TouchableOpacity>
-            <Text style={s.h1}>Ghi chú</Text>
-            <TouchableOpacity disabled={!n.title.trim()} onPress={() => onSave({ ...n, title: n.title.trim() })}>
-              <Text style={[s.save, !n.title.trim() && { opacity: 0.3 }]}>Lưu</Text>
-            </TouchableOpacity>
-          </View>
-          <ScrollView contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
-            <Segment options={TYPES} value={n.type} onChange={(type) => set({ type })} />
-            <TextInput style={s.input} placeholder="Tiêu đề ngắn gọn" placeholderTextColor="#777"
-              value={n.title} onChangeText={(title) => set({ title })} autoFocus />
-            <TextInput style={[s.input, { height: 140, textAlignVertical: "top" }]} multiline
-              placeholder="Chi tiết: bấm gì thì lỗi gì, mong muốn ra sao…" placeholderTextColor="#777"
-              value={n.body} onChangeText={(body) => set({ body })} />
-            <Text style={s.label}>Dự án (app / game)</Text>
-            <TextInput style={s.input} placeholder="Ví dụ: MaTools" placeholderTextColor="#777"
-              value={n.project} onChangeText={(project) => set({ project })} />
-            <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 12 }}>
-              {projects.map((p) => <Chip key={p} label={p} active={n.project === p} onPress={() => set({ project: p })} />)}
-            </View>
-            <Text style={s.label}>Ưu tiên</Text>
-            <Segment options={PRIORITIES} value={n.priority} onChange={(priority) => set({ priority })} />
-            <Text style={s.label}>Trạng thái</Text>
-            <Segment options={STATUSES} value={n.status} onChange={(status) => set({ status })} />
-            {onDelete && (
-              <TouchableOpacity onPress={onDelete} style={{ marginTop: 20 }}>
-                <Text style={{ color: "#ef4444", textAlign: "center" }}>Xoá ghi chú</Text>
-              </TouchableOpacity>
-            )}
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
-    </Modal>
-  );
-}
-
-function SettingsModal({ settings, onSave, onClose }) {
-  const [cfg, setCfg] = useState(settings);
-  return (
-    <Modal animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={s.root}>
-        <View style={s.header}>
-          <TouchableOpacity onPress={onClose}><Text style={s.hIcon}>✕</Text></TouchableOpacity>
-          <Text style={s.h1}>Cài đặt đồng bộ</Text>
-          <TouchableOpacity onPress={() => onSave(cfg)}><Text style={s.save}>Lưu</Text></TouchableOpacity>
-        </View>
-        <View style={{ padding: 16 }}>
-          <Text style={s.label}>Địa chỉ server (Worker URL)</Text>
-          <TextInput style={s.input} autoCapitalize="none" placeholder="https://ideanote-api.xxx.workers.dev"
-            placeholderTextColor="#777" value={cfg.url} onChangeText={(url) => setCfg({ ...cfg, url })} />
-          <Text style={s.label}>Mã bí mật</Text>
-          <TextInput style={s.input} autoCapitalize="none" secureTextEntry placeholder="API secret"
-            placeholderTextColor="#777" value={cfg.secret} onChangeText={(secret) => setCfg({ ...cfg, secret })} />
-          <Text style={{ color: "#888", marginTop: 8 }}>
-            Để trống nếu chỉ muốn dùng trên máy này. Ghi chú vẫn lưu offline và tự đồng bộ khi có cài đặt.
-          </Text>
-        </View>
-      </SafeAreaView>
-    </Modal>
-  );
-}
-
-const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#0f1115" },
-  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 16, paddingTop: 20 },
-  h1: { color: "#fff", fontSize: 20, fontWeight: "700" },
-  hIcon: { color: "#fff", fontSize: 20 },
-  save: { color: "#60a5fa", fontSize: 17, fontWeight: "600" },
-  sync: { color: "#888", fontSize: 12, paddingHorizontal: 16 },
-  filters: { paddingHorizontal: 12, paddingVertical: 8 },
-  chip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, backgroundColor: "#1c1f26", marginRight: 8, marginBottom: 6 },
-  chipOn: { backgroundColor: "#2563eb" },
-  chipText: { color: "#bbb", fontSize: 13 },
-  card: { flexDirection: "row", backgroundColor: "#1a1d24", borderRadius: 10, marginBottom: 10, overflow: "hidden" },
-  bar: { width: 5 },
-  meta: { color: "#888", fontSize: 12, paddingTop: 10, paddingHorizontal: 12 },
-  title: { color: "#fff", fontSize: 16, fontWeight: "600", paddingHorizontal: 12, paddingTop: 2, paddingBottom: 4 },
-  done: { textDecorationLine: "line-through", color: "#777" },
-  body: { color: "#aaa", paddingHorizontal: 12, paddingBottom: 10 },
-  empty: { color: "#666", textAlign: "center", marginTop: 60 },
-  fab: { position: "absolute", right: 20, bottom: 30, width: 60, height: 60, borderRadius: 30, backgroundColor: "#2563eb", alignItems: "center", justifyContent: "center", elevation: 6 },
-  fabText: { color: "#fff", fontSize: 30, marginTop: -2 },
-  input: { backgroundColor: "#1c1f26", color: "#fff", borderRadius: 8, padding: 12, fontSize: 16, marginBottom: 12 },
-  label: { color: "#999", marginBottom: 6, fontSize: 13 },
+const st = StyleSheet.create({
+  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12 },
+  icon: { fontSize: 22 },
+  search: { borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10, fontSize: 15 },
+  bottom: { position: "absolute", left: 16, right: 16, bottom: 20, flexDirection: "row", gap: 12 },
+  add: { flex: 1, alignItems: "center", paddingVertical: 16, borderRadius: 28, elevation: 6 },
+  addText: { color: "#fff", fontSize: 16, fontWeight: "700" },
 });
