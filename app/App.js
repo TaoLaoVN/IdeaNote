@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import {
   View, Text, TextInput, FlatList, TouchableOpacity, StyleSheet, ScrollView, Alert,
-  StatusBar, Platform, Linking, AppState, RefreshControl,
+  StatusBar, Platform, Linking, AppState, RefreshControl, KeyboardAvoidingView, Animated, Easing,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -60,6 +60,30 @@ function Main() {
   const [quickType, setQuickType] = useState("bug");
   const [undo, setUndo] = useState(null); // { id, title }
   const undoTimer = useRef(null);
+  const [banner, setBanner] = useState(null); // { text, ok }
+  const bannerTimer = useRef(null);
+  const spin = useRef(new Animated.Value(0)).current;
+
+  // Xoay biểu tượng 🔄 khi đang đồng bộ
+  useEffect(() => {
+    if (!syncing) {
+      spin.setValue(0);
+      return undefined;
+    }
+    const loop = Animated.loop(
+      Animated.timing(spin, { toValue: 1, duration: 900, easing: Easing.linear, useNativeDriver: true })
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [syncing, spin]);
+
+  useEffect(() => () => clearTimeout(bannerTimer.current), []);
+
+  const showBanner = useCallback((text, ok) => {
+    setBanner({ text, ok });
+    clearTimeout(bannerTimer.current);
+    bannerTimer.current = setTimeout(() => setBanner(null), 3500);
+  }, []);
 
   const notesRef = useRef([]);
   const settingsRef = useRef(settings);
@@ -97,7 +121,11 @@ function Main() {
   const doSync = useCallback(async (cfgArg, quiet) => {
     const cfg = cfgArg || settingsRef.current;
     if (!cfg.url || !cfg.secret) {
-      if (!quiet) setSyncMsg("Chưa cài đặt đồng bộ (bấm ⚙️)");
+      if (!quiet) {
+        const msg = "Chưa cài đặt đồng bộ (bấm ⚙️)";
+        setSyncMsg(msg);
+        showBanner(msg, false);
+      }
       return;
     }
     if (busy.current) return;
@@ -106,14 +134,18 @@ function Main() {
     try {
       const { remote, pushed, pulled } = await syncNotes(notesRef.current, cfg);
       commit((cur) => mergeNotes(cur, remote));
-      setSyncMsg(`Đã đồng bộ ✓ (↑${pushed} ↓${pulled})`);
+      const okMsg = `✓ Đã đồng bộ (↑${pushed} ↓${pulled})`;
+      setSyncMsg(okMsg);
+      showBanner(okMsg, true);
     } catch (e) {
-      setSyncMsg("Lỗi đồng bộ: " + e.message);
+      const errMsg = "Lỗi đồng bộ: " + e.message;
+      setSyncMsg(errMsg);
+      showBanner(errMsg, false);
     } finally {
       busy.current = false;
       setSyncing(false);
     }
-  }, [commit]);
+  }, [commit, showBanner]);
 
   // Đồng bộ khi mở app và mỗi lần quay lại app
   useEffect(() => {
@@ -277,23 +309,52 @@ function Main() {
             </Text>
           </View>
           <View style={{ flexDirection: "row", gap: 18 }}>
-            <TouchableOpacity onPress={copyPrompt} hitSlop={8}><Text style={st.icon}>📋</Text></TouchableOpacity>
-            <TouchableOpacity onPress={() => doSync()} hitSlop={8}><Text style={[st.icon, syncing && { opacity: 0.4 }]}>🔄</Text></TouchableOpacity>
-            <TouchableOpacity onPress={() => setShowSettings(true)} hitSlop={8}><Text style={st.icon}>⚙️</Text></TouchableOpacity>
+            <TouchableOpacity onPress={copyPrompt} hitSlop={8}
+              accessibilityRole="button" accessibilityLabel="Chép prompt các ghi chú">
+              <Text style={st.icon}>📋</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => doSync()} hitSlop={8} disabled={syncing}
+              accessibilityRole="button"
+              accessibilityLabel={syncing ? "Đang đồng bộ dữ liệu" : "Đồng bộ dữ liệu"}>
+              <Animated.Text style={[st.icon, {
+                transform: [{
+                  rotate: spin.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] })
+                }]
+              }]}>
+                🔄
+              </Animated.Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowSettings(true)} hitSlop={8}
+              accessibilityRole="button" accessibilityLabel="Cài đặt">
+              <Text style={st.icon}>⚙️</Text>
+            </TouchableOpacity>
           </View>
         </View>
       )}
 
       {/* Tìm kiếm + bộ lọc */}
       <View style={{ paddingHorizontal: 16 }}>
-        <TextInput
-          style={[st.search, { backgroundColor: t.card, color: t.text }]}
-          placeholder="🔍 Tìm ghi chú…"
-          placeholderTextColor={t.sub}
-          value={query}
-          onChangeText={setQuery}
-          clearButtonMode="while-editing"
-        />
+        <View style={{ position: "relative", justifyContent: "center" }}>
+          <TextInput
+            style={[st.search, { backgroundColor: t.card, color: t.text }, query.length > 0 && { paddingRight: 40 }]}
+            placeholder="🔍 Tìm ghi chú…"
+            placeholderTextColor={t.sub}
+            value={query}
+            onChangeText={setQuery}
+            accessibilityLabel="Tìm ghi chú"
+          />
+          {query.length > 0 && (
+            <TouchableOpacity
+              onPress={() => setQuery("")}
+              hitSlop={12}
+              accessibilityRole="button"
+              accessibilityLabel="Xoá nội dung tìm kiếm"
+              style={st.clear}
+            >
+              <Text style={{ color: t.sub, fontSize: 16, fontWeight: "600" }}>✕</Text>
+            </TouchableOpacity>
+          )}
+        </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 10 }}>
           <Chip t={t} label="Tất cả app" active={!project} onPress={() => setProject("")} />
           {projects.map((p) => (
@@ -313,7 +374,15 @@ function Main() {
           ))}
         </ScrollView>
       </View>
-      {!!syncMsg && <Text style={{ color: t.sub, fontSize: 12, paddingHorizontal: 16, paddingBottom: 2 }}>{syncMsg}</Text>}
+      {!!banner && (
+        <View
+          style={[st.banner, { backgroundColor: banner.ok ? t.ok : t.danger }]}
+          accessibilityRole="alert" accessibilityLiveRegion="polite"
+        >
+          <Text style={st.bannerText} numberOfLines={1}>{banner.text}</Text>
+        </View>
+      )}
+      {!!syncMsg && !banner && <Text style={{ color: t.sub, fontSize: 12, paddingHorizontal: 16, paddingBottom: 2 }}>{syncMsg}</Text>}
 
       {/* Danh sách */}
       <FlatList
@@ -350,9 +419,10 @@ function Main() {
       />
 
       {!!undo && (
-        <View style={[st.snack, { backgroundColor: t.card2 }]}>
+        <View style={[st.snack, { backgroundColor: t.card2, bottom: (!selecting && status !== "trash") ? 84 : 16 }]}>
           <Text style={{ color: t.text, flex: 1 }} numberOfLines={1}>Đã xoá “{undo.title}”</Text>
-          <TouchableOpacity onPress={undoDelete} hitSlop={10}>
+          <TouchableOpacity onPress={undoDelete} hitSlop={10}
+            accessibilityRole="button" accessibilityLabel="Hoàn tác xoá ghi chú">
             <Text style={{ color: t.primary, fontWeight: "700", marginLeft: 12 }}>HOÀN TÁC</Text>
           </TouchableOpacity>
         </View>
@@ -360,30 +430,46 @@ function Main() {
 
       {/* Ghi nhanh: gõ rồi bấm gửi, chi tiết bổ sung sau */}
       {!selecting && status !== "trash" && (
-        <View style={[st.composer, { backgroundColor: t.card }]}>
-          <TouchableOpacity onPress={() => setQuickType(quickType === "bug" ? "idea" : "bug")} style={[st.typeBtn, { backgroundColor: quickType === "bug" ? "#dc262633" : t.primary + "33" }]}>
-            <Text style={{ fontSize: 20 }}>{quickType === "bug" ? "🐞" : "💡"}</Text>
-          </TouchableOpacity>
-          <TextInput
-            style={{ flex: 1, color: t.text, fontSize: 16, paddingHorizontal: 12, paddingVertical: 10 }}
-            placeholder={quickType === "bug" ? "Ghi nhanh một bug…" : "Ghi nhanh một ý tưởng…"}
-            placeholderTextColor={t.sub}
-            value={quick}
-            onChangeText={setQuick}
-            onSubmitEditing={quickAdd}
-            blurOnSubmit={false}
-            returnKeyType="send"
-          />
-          {quick.trim() ? (
-            <TouchableOpacity onPress={quickAdd} style={[st.send, { backgroundColor: t.primary }]}>
-              <Text style={{ color: "#fff", fontSize: 18, fontWeight: "700" }}>↑</Text>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={st.composerWrap}
+          pointerEvents="box-none"
+        >
+          <View style={[st.composer, { backgroundColor: t.card }]}>
+            <TouchableOpacity
+              onPress={() => setQuickType(quickType === "bug" ? "idea" : "bug")}
+              accessibilityRole="button"
+              accessibilityLabel={quickType === "bug" ? "Đổi sang ý tưởng" : "Đổi sang bug"}
+              style={[st.typeBtn, { backgroundColor: quickType === "bug" ? "#dc262633" : t.primary + "33" }]}
+            >
+              <Text style={{ fontSize: 20 }}>{quickType === "bug" ? "🐞" : "💡"}</Text>
             </TouchableOpacity>
-          ) : (
-            <TouchableOpacity onPress={() => newNote(quickType)} style={[st.send, { backgroundColor: t.card2 }]}>
-              <Text style={{ color: t.text, fontSize: 20 }}>＋</Text>
-            </TouchableOpacity>
-          )}
-        </View>
+            <TextInput
+              style={{ flex: 1, color: t.text, fontSize: 16, paddingHorizontal: 12, paddingVertical: 10 }}
+              placeholder={quickType === "bug" ? "Ghi nhanh một bug…" : "Ghi nhanh một ý tưởng…"}
+              placeholderTextColor={t.sub}
+              value={quick}
+              onChangeText={setQuick}
+              onSubmitEditing={quickAdd}
+              blurOnSubmit={false}
+              returnKeyType="send"
+              accessibilityLabel="Nội dung ghi nhanh"
+            />
+            {quick.trim() ? (
+              <TouchableOpacity onPress={quickAdd}
+                accessibilityRole="button" accessibilityLabel="Gửi ghi nhanh"
+                style={[st.send, { backgroundColor: t.primary }]}>
+                <Text style={{ color: "#fff", fontSize: 18, fontWeight: "700" }}>↑</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity onPress={() => newNote(quickType)}
+                accessibilityRole="button" accessibilityLabel="Tạo ghi chú mới"
+                style={[st.send, { backgroundColor: t.card2 }]}>
+                <Text style={{ color: t.text, fontSize: 20 }}>＋</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </KeyboardAvoidingView>
       )}
 
       {editing && (
@@ -420,8 +506,12 @@ const st = StyleSheet.create({
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12 },
   icon: { fontSize: 22 },
   search: { borderRadius: 14, paddingHorizontal: 16, paddingVertical: 11, fontSize: 15 },
+  clear: { position: "absolute", right: 14, top: 0, bottom: 0, justifyContent: "center" },
+  banner: { marginHorizontal: 16, marginTop: 6, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 10 },
+  bannerText: { color: "#fff", fontSize: 13, fontWeight: "600" },
   snack: { position: "absolute", left: 16, right: 16, bottom: 84, flexDirection: "row", alignItems: "center", padding: 14, borderRadius: 14 },
-  composer: { position: "absolute", left: 16, right: 16, bottom: 16, flexDirection: "row", alignItems: "center", padding: 6, borderRadius: 28 },
+  composerWrap: { position: "absolute", left: 0, right: 0, bottom: 0 },
+  composer: { marginHorizontal: 16, marginBottom: 16, flexDirection: "row", alignItems: "center", padding: 6, borderRadius: 28 },
   typeBtn: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
   send: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
 });
