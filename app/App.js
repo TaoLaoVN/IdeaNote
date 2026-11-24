@@ -43,6 +43,8 @@ function Main() {
   const [syncMsg, setSyncMsg] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [ready, setReady] = useState(false);
+  const [quick, setQuick] = useState("");
+  const [quickType, setQuickType] = useState("bug");
   const [undo, setUndo] = useState(null); // { id, title }
   const undoTimer = useRef(null);
 
@@ -192,6 +194,18 @@ function Main() {
     });
   }, [project]);
 
+  const quickAdd = () => {
+    const title = quick.trim();
+    if (!title) return;
+    const now = Date.now();
+    commit((cur) => [...cur, {
+      id: uid(), project, type: quickType, priority: "medium", status: "new", title, body: "",
+      checklist: [], remind_at: 0, images: [], created_at: now, updated_at: now, deleted: false,
+    }]);
+    setQuick("");
+    doSync(undefined, true);
+  };
+
   // Bấm widget màn hình chính -> ideanote://new?type=bug&project=...
   useEffect(() => {
     const open = (url) => {
@@ -257,7 +271,7 @@ function Main() {
       {/* Tìm kiếm + bộ lọc */}
       <View style={{ paddingHorizontal: 16 }}>
         <TextInput
-          style={[st.search, { backgroundColor: t.card, color: t.text, borderColor: t.border }]}
+          style={[st.search, { backgroundColor: t.card, color: t.text }]}
           placeholder="🔍 Tìm ghi chú…"
           placeholderTextColor={t.sub}
           value={query}
@@ -324,15 +338,31 @@ function Main() {
         </View>
       )}
 
-      {/* Hai nút thêm nhanh */}
-      {!selecting && (
-        <View style={st.bottom} pointerEvents="box-none">
-          <TouchableOpacity style={[st.add, { backgroundColor: "#dc2626" }]} onPress={() => newNote("bug")}>
-            <Text style={st.addText}>🐞 Bug</Text>
+      {/* Ghi nhanh: gõ rồi bấm gửi, chi tiết bổ sung sau */}
+      {!selecting && status !== "trash" && (
+        <View style={[st.composer, { backgroundColor: t.card }]}>
+          <TouchableOpacity onPress={() => setQuickType(quickType === "bug" ? "idea" : "bug")} style={[st.typeBtn, { backgroundColor: quickType === "bug" ? "#dc262633" : t.primary + "33" }]}>
+            <Text style={{ fontSize: 20 }}>{quickType === "bug" ? "🐞" : "💡"}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[st.add, { backgroundColor: t.primary }]} onPress={() => newNote("idea")}>
-            <Text style={st.addText}>💡 Ý tưởng</Text>
-          </TouchableOpacity>
+          <TextInput
+            style={{ flex: 1, color: t.text, fontSize: 16, paddingHorizontal: 12, paddingVertical: 10 }}
+            placeholder={quickType === "bug" ? "Ghi nhanh một bug…" : "Ghi nhanh một ý tưởng…"}
+            placeholderTextColor={t.sub}
+            value={quick}
+            onChangeText={setQuick}
+            onSubmitEditing={quickAdd}
+            blurOnSubmit={false}
+            returnKeyType="send"
+          />
+          {quick.trim() ? (
+            <TouchableOpacity onPress={quickAdd} style={[st.send, { backgroundColor: t.primary }]}>
+              <Text style={{ color: "#fff", fontSize: 18, fontWeight: "700" }}>↑</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity onPress={() => newNote(quickType)} style={[st.send, { backgroundColor: t.card2 }]}>
+              <Text style={{ color: t.text, fontSize: 20 }}>＋</Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
 
@@ -369,9 +399,9 @@ function Main() {
 const st = StyleSheet.create({
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12 },
   icon: { fontSize: 22 },
-  search: { borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10, fontSize: 15 },
-  snack: { position: "absolute", left: 16, right: 16, bottom: 92, flexDirection: "row", alignItems: "center", padding: 14, borderRadius: 12, elevation: 8 },
-  bottom: { position: "absolute", left: 16, right: 16, bottom: 20, flexDirection: "row", gap: 12 },
-  add: { flex: 1, alignItems: "center", paddingVertical: 16, borderRadius: 28, elevation: 6 },
-  addText: { color: "#fff", fontSize: 16, fontWeight: "700" },
+  search: { borderRadius: 14, paddingHorizontal: 16, paddingVertical: 11, fontSize: 15 },
+  snack: { position: "absolute", left: 16, right: 16, bottom: 84, flexDirection: "row", alignItems: "center", padding: 14, borderRadius: 14 },
+  composer: { position: "absolute", left: 16, right: 16, bottom: 16, flexDirection: "row", alignItems: "center", padding: 6, borderRadius: 28 },
+  typeBtn: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
+  send: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
 });

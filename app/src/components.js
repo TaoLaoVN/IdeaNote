@@ -118,9 +118,9 @@ export function NoteCard({ note, t, selected, selecting, onPress, onLongPress, o
 }
 
 const st = StyleSheet.create({
-  chip: { paddingHorizontal: 13, paddingVertical: 7, borderRadius: 18, marginRight: 8, marginBottom: 6 },
+  chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, marginRight: 8, marginBottom: 6 },
   box: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, alignItems: "center", justifyContent: "center" },
-  card: { flexDirection: "row", borderRadius: 14, marginBottom: 10, overflow: "hidden", borderWidth: 1 },
-  bar: { width: 5 },
+  card: { flexDirection: "row", borderRadius: 18, marginBottom: 10, overflow: "hidden", borderWidth: 0 },
+  bar: { width: 4 },
   pill: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, marginRight: 6 },
 });
