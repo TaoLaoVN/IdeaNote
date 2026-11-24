@@ -1,0 +1,10 @@
+name = "ideanote-api"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+# Sau khi chạy: npx wrangler d1 create ideanote
+# dán database_id nhận được vào đây
+[[d1_databases]]
+binding = "DB"
+database_name = "ideanote"
+database_id = "THAY_BANG_DATABASE_ID"

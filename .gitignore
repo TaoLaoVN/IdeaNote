@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.expo/
+.wrangler/
+.dev.vars
+.env
+.env.*
+*.apk
+*.aab

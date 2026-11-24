@@ -1,0 +1,24 @@
+# IdeaNote
+
+Ghi bug / ý tưởng trên điện thoại, đồng bộ về PC qua Cloudflare.
+
+## 1. Backend (làm 1 lần)
+```
+cd backend
+npx wrangler login
+npx wrangler d1 create ideanote        # dán database_id vào wrangler.toml
+npx wrangler d1 execute ideanote --remote --file=schema.sql
+npx wrangler secret put API_SECRET     # tự đặt 1 mã bí mật dài
+npx wrangler deploy                    # nhận được URL *.workers.dev
+```
+
+## 2. Build APK cho Android
+```
+cd app
+npx eas-cli@latest login
+npx eas-cli@latest build -p android --profile preview
+```
+Build xong EAS cho link tải APK, mở link trên điện thoại để cài.
+
+## 3. Dùng
+Mở app, bấm ⚙️, nhập URL Worker và mã bí mật. Nút 📋 chép danh sách việc đang mở thành prompt để dán vào Claude Code.
