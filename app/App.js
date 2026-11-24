@@ -6,6 +6,7 @@ import {
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Clipboard from "expo-clipboard";
+import * as Haptics from "expo-haptics";
 import { requestWidgetUpdate } from "react-native-android-widget";
 
 import { QuickNoteWidget } from "./widget/QuickNote";
@@ -28,6 +29,18 @@ export default function App() {
 }
 
 const NEXT = { new: "doing", doing: "done", done: "new" };
+
+// Haptics an toàn: bỏ qua lỗi và không làm gì trên web / nền tảng không hỗ trợ
+const haptic = (fn) => {
+  if (Platform.OS === "web") return;
+  try {
+    Promise.resolve(fn()).catch(() => {});
+  } catch (e) {
+    // ignore
+  }
+};
+const hapticSelect = () => haptic(() => Haptics.selectionAsync());
+const hapticMedium = () => haptic(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium));
 
 function Main() {
   const t = useTheme();
@@ -157,12 +170,15 @@ function Main() {
   // ----- thao tác -----
   const save = (n) => {
     const next = { ...n, updated_at: Date.now() };
+    const prev = notes.find((x) => x.id === n.id);
+    if (prev && prev.status !== n.status) hapticSelect();
     commit((cur) => (cur.some((x) => x.id === n.id) ? cur.map((x) => (x.id === n.id ? next : x)) : [...cur, next]));
     setEditing(null);
     doSync(undefined, true);
   };
 
   const toggle = (n) => {
+    hapticSelect();
     commit((cur) => cur.map((x) => (x.id === n.id ? { ...x, status: NEXT[x.status], updated_at: Date.now() } : x)));
     doSync(undefined, true);
   };
@@ -323,7 +339,11 @@ function Main() {
                 ? Alert.alert("Khôi phục ghi chú?", item.title, [{ text: "Huỷ" }, { text: "Khôi phục", onPress: () => setDeleted(item.id, false) }])
                 : selecting ? toggleSelect(item.id) : setEditing(item)
             }
-            onLongPress={() => status !== "trash" && toggleSelect(item.id)}
+            onLongPress={() => {
+              if (status === "trash") return;
+              if (!selecting) hapticMedium();
+              toggleSelect(item.id);
+            }}
             onToggle={() => toggle(item)}
           />
         )}
