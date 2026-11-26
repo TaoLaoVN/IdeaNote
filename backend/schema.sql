@@ -11,9 +11,11 @@ CREATE TABLE IF NOT EXISTS notes (
   deleted INTEGER NOT NULL DEFAULT 0,
   checklist TEXT NOT NULL DEFAULT '[]',
   remind_at INTEGER NOT NULL DEFAULT 0,
-  images TEXT NOT NULL DEFAULT '[]'
+  images TEXT NOT NULL DEFAULT '[]',
+  rev INTEGER NOT NULL DEFAULT 0            -- server gán, mốc đồng bộ
 );
 CREATE INDEX IF NOT EXISTS idx_notes_updated ON notes(updated_at);
+CREATE INDEX IF NOT EXISTS idx_notes_rev ON notes(rev);
 CREATE TABLE IF NOT EXISTS images (
   id TEXT PRIMARY KEY,
   data TEXT NOT NULL,

@@ -22,6 +22,30 @@ export function writeImageBase64(id, b64) {
   f.write(b64, { encoding: "base64" });
 }
 
+// Server từ chối ảnh có chuỗi base64 dài hơn mức này (xem backend/src/index.js)
+export const MAX_IMAGE_CHARS = 1_500_000;
+// [rộng tối đa, mức nén]: thử lần lượt tới khi ảnh vừa giới hạn
+const STEPS = [[1280, 0.6], [1080, 0.5], [900, 0.45], [720, 0.4], [540, 0.35]];
+
+async function encodeImage(uri, width) {
+  for (const [maxWidth, compress] of STEPS) {
+    const ctx = ImageManipulator.manipulate(uri);
+    if (width > maxWidth) ctx.resize({ width: maxWidth });
+    const img = await ctx.renderAsync();
+    const out = await img.saveAsync({ format: SaveFormat.JPEG, compress, base64: true });
+    if (out.base64.length <= MAX_IMAGE_CHARS) return out.base64;
+  }
+  throw new Error("Ảnh quá lớn, không thu nhỏ đủ để đồng bộ được");
+}
+
+// Thu nhỏ ảnh đã lưu từ trước mà vượt giới hạn, ghi đè file và trả về base64 mới
+export async function fitImage(id) {
+  const { width } = await ImageManipulator.manipulate(imageUri(id)).renderAsync();
+  const b64 = await encodeImage(imageUri(id), width);
+  writeImageBase64(id, b64);
+  return b64;
+}
+
 // Chọn ảnh từ thư viện, thu nhỏ (rộng tối đa 1280px, JPEG) rồi lưu. Trả về danh sách id.
 export async function pickImages() {
   const res = await ImagePicker.launchImageLibraryAsync({
@@ -32,12 +56,9 @@ export async function pickImages() {
   if (res.canceled) return [];
   const ids = [];
   for (const a of res.assets) {
-    const ctx = ImageManipulator.manipulate(a.uri);
-    if (a.width > 1280) ctx.resize({ width: 1280 });
-    const img = await ctx.renderAsync();
-    const out = await img.saveAsync({ format: SaveFormat.JPEG, compress: 0.6, base64: true });
+    const b64 = await encodeImage(a.uri, a.width);
     const id = uid();
-    writeImageBase64(id, out.base64);
+    writeImageBase64(id, b64);
     ids.push(id);
   }
   return ids;

@@ -17,20 +17,28 @@ export default {
 
     const url = new URL(request.url);
 
-    // GET /notes?since=<ms>  -> các ghi chú thay đổi sau mốc since (gồm cả đã xoá)
+    // GET /notes?after=<rev> -> các ghi chú server nhận sau mốc rev (gồm cả đã xoá), kèm cursor mới.
+    // after=0 trả về tất cả. ?since=<ms> chỉ còn cho bản app cũ (có thể sót ghi chú đẩy lên muộn).
     if (request.method === "GET" && url.pathname === "/notes") {
-      const since = Number(url.searchParams.get("since") || 0);
+      const byRev = url.searchParams.has("after");
+      const mark = Number(url.searchParams.get(byRev ? "after" : "since")) || 0;
       const { results } = await env.DB.prepare(
-        "SELECT * FROM notes WHERE updated_at > ? ORDER BY updated_at ASC"
+        byRev
+          ? "SELECT * FROM notes WHERE rev > ? ORDER BY rev ASC"
+          : "SELECT * FROM notes WHERE updated_at > ? ORDER BY updated_at ASC"
       )
-        .bind(since)
+        .bind(byRev && mark <= 0 ? -1 : mark)
         .all();
-      const notes = results.map((r) => ({
-        ...r,
-        checklist: JSON.parse(r.checklist || "[]"),
-        images: JSON.parse(r.images || "[]"),
-      }));
-      return json({ notes, now: Date.now() });
+      let cursor = mark;
+      const notes = results.map(({ rev, ...r }) => {
+        cursor = byRev ? Math.max(cursor, rev) : cursor;
+        return {
+          ...r,
+          checklist: JSON.parse(r.checklist || "[]"),
+          images: JSON.parse(r.images || "[]"),
+        };
+      });
+      return json(byRev ? { notes, cursor } : { notes, now: Date.now() });
     }
 
     // POST /notes  body: { notes: [...] } -> upsert, bản có updated_at mới hơn thắng
@@ -38,13 +46,14 @@ export default {
       const body = await request.json();
       const list = Array.isArray(body.notes) ? body.notes : [];
       const stmt = env.DB.prepare(
-        `INSERT INTO notes (id, project, type, priority, status, title, body, created_at, updated_at, deleted, checklist, remind_at, images)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO notes (id, project, type, priority, status, title, body, created_at, updated_at, deleted, checklist, remind_at, images, rev)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(rev), 0) + 1 FROM notes))
          ON CONFLICT(id) DO UPDATE SET
            project=excluded.project, type=excluded.type, priority=excluded.priority,
            status=excluded.status, title=excluded.title, body=excluded.body,
            updated_at=excluded.updated_at, deleted=excluded.deleted,
-           checklist=excluded.checklist, remind_at=excluded.remind_at, images=excluded.images
+           checklist=excluded.checklist, remind_at=excluded.remind_at, images=excluded.images,
+           rev=excluded.rev
          WHERE excluded.updated_at > notes.updated_at`
       );
       if (list.length) {

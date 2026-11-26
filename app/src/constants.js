@@ -1,6 +1,7 @@
 export const KEY_NOTES = "ideanote:notes";
 export const KEY_SETTINGS = "ideanote:settings";
-export const KEY_SYNC = "ideanote:lastSync";
+// Khoá mới: máy nâng cấp từ bản cũ sẽ tự đồng bộ lại toàn bộ một lần
+export const KEY_SYNC = "ideanote:syncState";
 export const KEY_WIDGET_PROJECT = "ideanote:widgetProject";
 
 export const TYPES = { bug: "🐞 Bug", idea: "💡 Ý tưởng", improvement: "✨ Cải tiến" };

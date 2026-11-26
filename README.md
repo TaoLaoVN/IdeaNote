@@ -12,6 +12,15 @@ npx wrangler secret put API_SECRET     # tự đặt 1 mã bí mật dài
 npx wrangler deploy                    # nhận được URL *.workers.dev
 ```
 
+### Nâng cấp từ bản cũ (mốc đồng bộ mới)
+Chỉ dành cho database tạo trước khi có cột `rev`. Chạy đúng thứ tự, deploy ngay sau migration:
+```
+cd backend
+npx wrangler d1 execute ideanote --remote --file=migrations/001_add_rev.sql   # chỉ chạy MỘT lần
+npx wrangler deploy
+```
+Sau đó build lại APK (mục 2) và cài trên mọi máy. Lần đồng bộ đầu tiên, mỗi máy tự đẩy và kéo lại toàn bộ, nên lấy được cả ghi chú từng bị sót.
+
 ## 2. Build APK cho Android
 ```
 cd app

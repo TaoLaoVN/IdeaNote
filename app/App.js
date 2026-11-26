@@ -15,7 +15,7 @@ import {
   KEY_NOTES, KEY_SETTINGS, KEY_SYNC, KEY_WIDGET_PROJECT, TYPES, PRIO_RANK, TRASH_DAYS, uid, projectColor, buildPrompt,
 } from "./src/constants";
 import { rescheduleReminders } from "./src/reminders";
-import { mergeNotes, syncNotes } from "./src/sync";
+import { mergeNotes, syncNotes, saveSyncState } from "./src/sync";
 import { Chip, NoteCard } from "./src/components";
 import NoteEditor from "./src/NoteEditor";
 import SettingsModal from "./src/SettingsModal";
@@ -88,6 +88,7 @@ function Main() {
   const notesRef = useRef([]);
   const settingsRef = useRef(settings);
   const busy = useRef(false);
+  const readyRef = useRef(false);
   settingsRef.current = settings;
 
   // Mọi thay đổi ghi chú đi qua đây để ref và state luôn khớp nhau
@@ -104,6 +105,7 @@ function Main() {
       const [n, s] = await Promise.all([AsyncStorage.getItem(KEY_NOTES), AsyncStorage.getItem(KEY_SETTINGS)]);
       if (n) commit((cur) => mergeNotes(JSON.parse(n), cur));
       if (s) setSettings(JSON.parse(s));
+      readyRef.current = true;
       setReady(true);
     })();
   }, [commit]);
@@ -128,15 +130,20 @@ function Main() {
       }
       return;
     }
-    if (busy.current) return;
+    // Chưa nạp xong dữ liệu trong máy thì không đồng bộ, tránh ghi đè và dời mốc sai
+    if (!readyRef.current || busy.current) return;
     busy.current = true;
     setSyncing(true);
     try {
-      const { remote, pushed, pulled } = await syncNotes(notesRef.current, cfg);
-      commit((cur) => mergeNotes(cur, remote));
-      const okMsg = `✓ Đã đồng bộ (↑${pushed} ↓${pulled})`;
+      const { remote, pushed, pulled, imagesFailed, state } = await syncNotes(notesRef.current, cfg);
+      const merged = commit((cur) => mergeNotes(cur, remote));
+      // Ghi chú phải nằm trong máy trước khi dời mốc đồng bộ
+      await AsyncStorage.setItem(KEY_NOTES, JSON.stringify(merged));
+      await saveSyncState(state);
+      const okMsg = `✓ Đã đồng bộ (↑${pushed} ↓${pulled})` +
+        (imagesFailed ? ` · ${imagesFailed} ảnh chưa xong, sẽ thử lại` : "");
       setSyncMsg(okMsg);
-      showBanner(okMsg, true);
+      showBanner(okMsg, !imagesFailed);
     } catch (e) {
       const errMsg = "Lỗi đồng bộ: " + e.message;
       setSyncMsg(errMsg);
@@ -152,7 +159,12 @@ function Main() {
     if (ready) doSync(undefined, true);
   }, [ready, doSync]);
   useEffect(() => {
-    const sub = AppState.addEventListener("change", (s) => s === "active" && doSync(undefined, true));
+    const sub = AppState.addEventListener("change", (s) => {
+      if (s !== "active") return;
+      // Đặt lại lịch nhắc: người dùng có thể vừa bật quyền thông báo trong cài đặt máy
+      if (readyRef.current) rescheduleReminders(notesRef.current);
+      doSync(undefined, true);
+    });
     return () => sub.remove();
   }, [doSync]);
 
@@ -255,18 +267,35 @@ function Main() {
   };
 
   // Bấm widget màn hình chính -> ideanote://new?type=bug&project=...
+  // Chỉ đăng ký một lần: getInitialURL() luôn trả về link lúc mở app, gọi lại sẽ bật lại trình soạn
+  const newNoteRef = useRef(newNote);
+  const editingRef = useRef(editing);
+  useEffect(() => {
+    newNoteRef.current = newNote;
+    editingRef.current = editing;
+  }, [newNote, editing]);
   useEffect(() => {
     const open = (url) => {
-      if (url && url.startsWith("ideanote://new")) {
-        const tm = url.match(/type=(\w+)/);
-        const pm = url.match(/project=([^&]*)/);
-        newNote(tm ? tm[1] : "bug", pm ? decodeURIComponent(pm[1]) : undefined);
+      if (!url || !url.startsWith("ideanote://new")) return;
+      const tm = url.match(/type=(\w+)/);
+      const pm = url.match(/project=([^&]*)/);
+      let proj;
+      try {
+        proj = pm ? decodeURIComponent(pm[1]) : undefined;
+      } catch {
+        proj = undefined; // link hỏng thì bỏ qua tên app
       }
+      const start = () => newNoteRef.current(tm ? tm[1] : "bug", proj);
+      if (!editingRef.current) return start();
+      Alert.alert("Đang soạn dở một ghi chú", "Tạo ghi chú mới sẽ bỏ phần chưa lưu.", [
+        { text: "Soạn tiếp", style: "cancel" },
+        { text: "Bỏ và tạo mới", style: "destructive", onPress: start },
+      ]);
     };
     Linking.getInitialURL().then(open);
     const sub = Linking.addEventListener("url", (e) => open(e.url));
     return () => sub.remove();
-  }, [newNote]);
+  }, []);
 
   // Chọn nhiều để chép prompt
   const selecting = selected.size > 0;
