@@ -4,6 +4,7 @@ import { PROJECT_COLORS, PROJECT_ICONS, projectColor } from "./constants";
 import { pickIcon } from "./images";
 import { showDialog } from "./Dialog";
 import ProjectBadge from "./ProjectBadge";
+import Icon from "./Icon";
 
 // Tạo dự án mới, hoặc sửa màu / icon của dự án đã có (editName).
 // onDelete chỉ được truyền khi dự án chưa có ghi chú nào
@@ -75,12 +76,12 @@ export default function ProjectModal({ editName, initialLook, t, onSave, onClose
               </TouchableOpacity>
               <TouchableOpacity onPress={chooseImage} style={option(!!look.image)}
                 accessibilityRole="button" accessibilityLabel="Chọn ảnh từ thư viện">
-                {look.image ? <ProjectBadge look={look} size={34} /> : <Text style={{ fontSize: 20 }}>🖼️</Text>}
+                {look.image ? <ProjectBadge look={look} size={34} /> : <Icon name="image" size={24} color={t.sub} />}
               </TouchableOpacity>
               {PROJECT_ICONS.map((icon) => (
                 <TouchableOpacity key={icon} onPress={() => setLook({ ...look, icon, image: "" })} style={option(look.icon === icon)}
                   accessibilityRole="button" accessibilityLabel={`Icon ${icon}`}>
-                  <Text style={{ fontSize: 20 }}>{icon}</Text>
+                  <Icon name={icon} size={24} color={look.icon === icon ? color : t.text} />
                 </TouchableOpacity>
               ))}
             </View>

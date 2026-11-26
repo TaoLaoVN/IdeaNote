@@ -2,10 +2,12 @@ import React, { useState } from "react";
 import { View, Text, TextInput, TouchableOpacity, Modal, ScrollView, KeyboardAvoidingView, Image, StyleSheet } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Clipboard from "expo-clipboard";
-import { TYPES, PRIORITIES, STATUSES, PRIO_COLOR, projectColor, buildPrompt, uid, fmtDateTime } from "./constants";
+import { TYPES, TYPE_ICONS, PRIORITIES, STATUSES, PRIO_COLOR, projectColor, buildPrompt, uid, fmtDateTime } from "./constants";
 import { pickImages, imageUri, hasImage } from "./images";
 import { ensureReminderPermission } from "./reminders";
 import { Chip, Segment } from "./components";
+import ProjectBadge from "./ProjectBadge";
+import Icon from "./Icon";
 import { showDialog } from "./Dialog";
 
 export default function NoteEditor({ note, projects, looks, t, onSave, onCancel, onDelete }) {
@@ -80,7 +82,7 @@ export default function NoteEditor({ note, projects, looks, t, onSave, onCancel,
 
         <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
           <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
-            <Segment t={t} options={TYPES} value={n.type} onChange={(type) => set({ type })} />
+            <Segment t={t} options={TYPES} icons={TYPE_ICONS} value={n.type} onChange={(type) => set({ type })} />
 
             <TextInput
               style={[...input, { fontSize: 18, fontWeight: "600" }]}
@@ -107,7 +109,7 @@ export default function NoteEditor({ note, projects, looks, t, onSave, onCancel,
             {checklist.map((c) => (
               <View key={c.id} style={st.row}>
                 <TouchableOpacity onPress={() => setItem(c.id, { done: !c.done })} hitSlop={8}>
-                  <Text style={{ fontSize: 22, color: c.done ? t.ok : t.sub }}>{c.done ? "☑" : "☐"}</Text>
+                  <Icon name={c.done ? "checked" : "checkbox"} size={24} color={c.done ? t.ok : t.sub} />
                 </TouchableOpacity>
                 <TextInput
                   style={{ flex: 1, color: c.done ? t.sub : t.text, fontSize: 16, marginHorizontal: 10, textDecorationLine: c.done ? "line-through" : "none" }}
@@ -115,7 +117,7 @@ export default function NoteEditor({ note, projects, looks, t, onSave, onCancel,
                   onChangeText={(text) => setItem(c.id, { text })}
                 />
                 <TouchableOpacity onPress={() => set({ checklist: checklist.filter((x) => x.id !== c.id) })} hitSlop={8}>
-                  <Text style={{ color: t.sub, fontSize: 18 }}>✕</Text>
+                  <Icon name="close" size={18} color={t.sub} />
                 </TouchableOpacity>
               </View>
             ))}
@@ -148,7 +150,7 @@ export default function NoteEditor({ note, projects, looks, t, onSave, onCancel,
                 </TouchableOpacity>
               ))}
               <TouchableOpacity onPress={addImages} style={[st.thumb, { backgroundColor: t.card2, alignItems: "center", justifyContent: "center" }]}>
-                <Text style={{ color: t.primary, fontSize: 28 }}>＋</Text>
+                <Icon name="add" size={28} color={t.primary} />
               </TouchableOpacity>
             </ScrollView>
 
@@ -173,7 +175,10 @@ export default function NoteEditor({ note, projects, looks, t, onSave, onCancel,
             {projects.length > 0 && (
               <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 14 }}>
                 {projects.map((p) => (
-                  <Chip key={p} t={t} label={looks[p]?.icon ? `${looks[p].icon} ${p}` : p} color={projectColor(p, looks[p])} active={n.project === p} onPress={() => set({ project: p })} />
+                  <Chip key={p} t={t} label={p} color={projectColor(p, looks[p])}
+                    icon={looks[p]?.icon || looks[p]?.image
+                      ? <ProjectBadge name={p} look={n.project === p ? { ...looks[p], color: "#fff" } : looks[p]} size={16} />
+                      : null} active={n.project === p} onPress={() => set({ project: p })} />
                 ))}
               </View>
             )}
@@ -184,8 +189,9 @@ export default function NoteEditor({ note, projects, looks, t, onSave, onCancel,
             <Text style={[st.label, { color: t.sub }]}>Trạng thái</Text>
             <Segment t={t} options={STATUSES} value={n.status} onChange={(status) => set({ status })} />
 
-            <TouchableOpacity onPress={copyPrompt} style={[st.btn, { backgroundColor: t.card2 }]}>
-              <Text style={{ color: t.text, fontWeight: "600" }}>📋 Chép thành prompt cho Claude Code</Text>
+            <TouchableOpacity onPress={copyPrompt} style={[st.btn, { backgroundColor: t.card2, flexDirection: "row", justifyContent: "center", gap: 8 }]}>
+              <Icon name="copy" size={20} color={t.text} />
+              <Text style={{ color: t.text, fontWeight: "600" }}>Chép thành prompt cho Claude Code</Text>
             </TouchableOpacity>
             {!isNew && (
               <TouchableOpacity onPress={onDelete} style={{ marginTop: 18 }}>

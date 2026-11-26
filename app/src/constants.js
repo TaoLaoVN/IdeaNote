@@ -8,8 +8,10 @@ export const KEY_PROJECTS = "ideanote:projects";
 // Màu và icon của từng dự án: { tên: { color, icon, image } }, chỉ lưu trên máy
 export const KEY_PROJECT_LOOKS = "ideanote:projectLooks";
 
-export const TYPES = { bug: "🐞 Bug", idea: "💡 Ý tưởng", improvement: "✨ Cải tiến" };
-export const TYPE_ICON = { bug: "🐞", idea: "💡", improvement: "✨" };
+export const TYPES = { bug: "Bug", idea: "Ý tưởng", improvement: "Cải tiến" };
+// Tên icon (xem src/Icon.js) và màu của từng loại; khoá trùng tên icon
+export const TYPE_ICONS = { bug: "bug", idea: "idea", improvement: "improvement" };
+export const TYPE_COLOR = { bug: "#ef4444", idea: "#f59e0b", improvement: "#a855f7" };
 export const PRIORITIES = { high: "Cao", medium: "Vừa", low: "Thấp" };
 export const STATUSES = { new: "Mới", doing: "Đang làm", done: "Xong" };
 export const PRIO_COLOR = { high: "#ef4444", medium: "#f59e0b", low: "#22c55e" };
@@ -20,7 +22,7 @@ export const uid = () => Date.now().toString(36) + Math.random().toString(36).sl
 // Màu dự án: dùng màu người dùng chọn, chưa chọn thì suy ra từ tên
 const PALETTE = ["#3b82f6", "#a855f7", "#ec4899", "#14b8a6", "#f97316", "#84cc16", "#06b6d4", "#eab308"];
 export const PROJECT_COLORS = [...PALETTE, "#ef4444", "#6b7280"];
-export const PROJECT_ICONS = ["📱", "💻", "🌐", "🎮", "🛒", "💬", "📷", "🎵", "📚", "💰", "🏥", "🚀", "🔒", "🎨", "⚙️", "🤖"];
+export const PROJECT_ICONS = ["mobile", "desktop", "web", "game", "shop", "chat", "camera", "music", "books", "money", "health", "rocket", "lock", "art", "settings", "robot"];
 export function projectColor(name, look) {
   if (look?.color) return look.color;
   if (!name) return "#6b7280";

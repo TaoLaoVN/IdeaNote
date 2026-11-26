@@ -13,7 +13,7 @@ import { requestWidgetUpdate } from "react-native-android-widget";
 import { QuickNoteWidget } from "./widget/QuickNote";
 import { useTheme } from "./src/theme";
 import {
-  KEY_NOTES, KEY_SETTINGS, KEY_SYNC, KEY_WIDGET_PROJECT, KEY_PROJECTS, KEY_PROJECT_LOOKS, TYPES, PRIO_RANK, TRASH_DAYS, uid, projectColor, buildPrompt,
+  KEY_NOTES, KEY_SETTINGS, KEY_SYNC, KEY_WIDGET_PROJECT, KEY_PROJECTS, KEY_PROJECT_LOOKS, TYPES, TYPE_ICONS, TYPE_COLOR, PRIO_RANK, TRASH_DAYS, uid, projectColor, buildPrompt,
 } from "./src/constants";
 import { rescheduleReminders } from "./src/reminders";
 import { mergeNotes, syncNotes, saveSyncState } from "./src/sync";
@@ -24,6 +24,7 @@ import { showDialog, DialogHost } from "./src/Dialog";
 import NoteViewer from "./src/NoteViewer";
 import ProjectModal from "./src/ProjectModal";
 import ProjectBadge from "./src/ProjectBadge";
+import Icon from "./src/Icon";
 import Dropdown, { DropdownItem } from "./src/Dropdown";
 
 export default function App() {
@@ -35,7 +36,8 @@ export default function App() {
 }
 
 const NEXT = { new: "doing", doing: "done", done: "new" };
-const STATUS_FILTERS = { open: "Đang mở", done: "Đã xong", all: "Tất cả", trash: "🗑 Thùng rác" };
+const STATUS_FILTERS = { open: "Đang mở", done: "Đã xong", all: "Tất cả", trash: "Thùng rác" };
+const STATUS_ICONS = { open: "open", done: "done", all: "all", trash: "trash" };
 
 // Haptics an toàn: bỏ qua lỗi và không làm gì trên web / nền tảng không hỗ trợ
 const haptic = (fn) => {
@@ -155,7 +157,7 @@ function Main() {
     const cfg = cfgArg || settingsRef.current;
     if (!cfg.url || !cfg.secret) {
       if (!quiet) {
-        const msg = "Chưa cài đặt đồng bộ (bấm ⚙️)";
+        const msg = "Chưa cài đặt đồng bộ (bấm nút Cài đặt)";
         setSyncMsg(msg);
         showBanner(msg, false);
       }
@@ -424,16 +426,16 @@ function Main() {
   const menuItems = (n) => {
     // Bấm nút nào thì đóng hàng nút trước rồi mới làm việc
     const item = (icon, label, run, danger) => ({ icon, label, danger, onPress: () => { showActions(""); run(); } });
-    const view = item("👁", "Xem", () => setViewingId(n.id));
-    if (status === "trash") return [view, item("♻️", "Khôi phục", () => setDeleted(n.id, false))];
+    const view = item("view", "Xem", () => setViewingId(n.id));
+    if (status === "trash") return [view, item("reopen", "Khôi phục", () => setDeleted(n.id, false))];
     const done = n.status === "done";
     return [
       view,
-      item("✏️", "Sửa", () => setEditing(n)),
-      item(done ? "↩️" : "✅", done ? "Mở lại" : "Xong", () => save({ ...n, status: done ? "new" : "done" })),
-      item("📋", "Chép", () => copyOne(n)),
-      item("☑️", "Chọn", () => toggleSelect(n.id)),
-      item("🗑", "Xoá", () => remove(n), true),
+      item("edit", "Sửa", () => setEditing(n)),
+      item(done ? "reopen" : "done", done ? "Mở lại" : "Xong", () => save({ ...n, status: done ? "new" : "done" })),
+      item("copy", "Chép", () => copyOne(n)),
+      item("checked", "Chọn", () => toggleSelect(n.id)),
+      item("trash", "Xoá", () => remove(n), true),
     ];
   };
 
@@ -453,11 +455,17 @@ function Main() {
       {selecting ? (
         <View style={st.header}>
           <TouchableOpacity onPress={() => setSelected(new Set())} hitSlop={12}>
-            <Text style={{ color: t.sub, fontSize: 16 }}>✕ Bỏ chọn</Text>
+            <View style={st.textBtn}>
+              <Icon name="close" size={16} color={t.sub} />
+              <Text style={{ color: t.sub, fontSize: 16 }}>Bỏ chọn</Text>
+            </View>
           </TouchableOpacity>
           <Text style={{ color: t.text, fontWeight: "700", fontSize: 16 }}>{selected.size} đã chọn</Text>
           <TouchableOpacity onPress={copyPrompt} hitSlop={12}>
-            <Text style={{ color: t.primary, fontWeight: "700", fontSize: 16 }}>📋 Chép</Text>
+            <View style={st.textBtn}>
+              <Icon name="copy" size={20} color={t.primary} />
+              <Text style={{ color: t.primary, fontWeight: "700", fontSize: 16 }}>Chép</Text>
+            </View>
           </TouchableOpacity>
         </View>
       ) : (
@@ -471,22 +479,20 @@ function Main() {
           <View style={{ flexDirection: "row", gap: 18 }}>
             <TouchableOpacity onPress={copyPrompt} hitSlop={8}
               accessibilityRole="button" accessibilityLabel="Chép prompt các ghi chú">
-              <Text style={st.icon}>📋</Text>
+              <Icon name="copy" size={26} color={t.text} />
             </TouchableOpacity>
             <TouchableOpacity onPress={() => doSync()} hitSlop={8} disabled={syncing}
               accessibilityRole="button"
               accessibilityLabel={syncing ? "Đang đồng bộ dữ liệu" : "Đồng bộ dữ liệu"}>
-              <Animated.Text style={[st.icon, {
-                transform: [{
-                  rotate: spin.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] })
-                }]
-              }]}>
-                🔄
-              </Animated.Text>
+              <Animated.View style={{
+                transform: [{ rotate: spin.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] }) }],
+              }}>
+                <Icon name="sync" size={26} color={t.text} />
+              </Animated.View>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setShowSettings(true)} hitSlop={8}
               accessibilityRole="button" accessibilityLabel="Cài đặt">
-              <Text style={st.icon}>⚙️</Text>
+              <Icon name="settings" size={26} color={t.text} />
             </TouchableOpacity>
           </View>
         </View>
@@ -497,12 +503,15 @@ function Main() {
         <View style={{ position: "relative", justifyContent: "center" }}>
           <TextInput
             style={[st.search, { backgroundColor: t.card, color: t.text }, query.length > 0 && { paddingRight: 40 }]}
-            placeholder="🔍 Tìm ghi chú…"
+            placeholder="Tìm ghi chú…"
             placeholderTextColor={t.sub}
             value={query}
             onChangeText={setQuery}
             accessibilityLabel="Tìm ghi chú"
           />
+          <View style={st.searchIcon} pointerEvents="none">
+            <Icon name="search" size={20} color={t.sub} />
+          </View>
           {query.length > 0 && (
             <TouchableOpacity
               onPress={() => setQuery("")}
@@ -511,7 +520,7 @@ function Main() {
               accessibilityLabel="Xoá nội dung tìm kiếm"
               style={st.clear}
             >
-              <Text style={{ color: t.sub, fontSize: 16, fontWeight: "600" }}>✕</Text>
+              <Icon name="close" size={16} color={t.sub} />
             </TouchableOpacity>
           )}
         </View>
@@ -522,14 +531,14 @@ function Main() {
             <Text style={{ color: t.text, fontSize: 14, fontWeight: "600", flexShrink: 1 }} numberOfLines={1}>
               {project || "Tất cả dự án"}
             </Text>
-            <Text style={{ color: t.sub, fontSize: 13, marginLeft: 8 }}>▼</Text>
+            <View style={{ marginLeft: 8 }}><Icon name="caret" size={14} color={t.sub} /></View>
           </TouchableOpacity>
           <TouchableOpacity ref={rightBtn} onPress={() => openDropdown("right", rightBtn)} style={[st.filterBtn, { backgroundColor: t.card2 }]}
             accessibilityRole="button" accessibilityLabel={`Chọn trạng thái, đang chọn ${STATUS_FILTERS[status]}`}>
             <Text style={{ color: t.text, fontSize: 14, fontWeight: "600", flexShrink: 1 }} numberOfLines={1}>
               {STATUS_FILTERS[status]}{type && status !== "trash" ? ` · ${TYPES[type]}` : ""}
             </Text>
-            <Text style={{ color: t.sub, fontSize: 13, marginLeft: 8 }}>▼</Text>
+            <View style={{ marginLeft: 8 }}><Icon name="caret" size={14} color={t.sub} /></View>
           </TouchableOpacity>
         </View>
       </View>
@@ -555,7 +564,7 @@ function Main() {
         refreshControl={<RefreshControl refreshing={syncing} onRefresh={() => doSync()} tintColor={t.sub} />}
         ListEmptyComponent={
           <View style={{ alignItems: "center", marginTop: 70 }}>
-            <Text style={{ fontSize: 44 }}>{query ? "🔍" : "📝"}</Text>
+            <Icon name={query ? "search" : "newNote"} size={56} color={t.sub} />
             <Text style={{ color: t.sub, marginTop: 10, textAlign: "center", lineHeight: 22 }}>
               {query ? "Không tìm thấy ghi chú nào." : "Chưa có ghi chú nào.\nBấm nút bên dưới để thêm bug hoặc ý tưởng."}
             </Text>
@@ -610,7 +619,7 @@ function Main() {
               accessibilityLabel={quickType === "bug" ? "Đổi sang ý tưởng" : "Đổi sang bug"}
               style={[st.typeBtn, { backgroundColor: quickType === "bug" ? "#dc262633" : t.primary + "33" }]}
             >
-              <Text style={{ fontSize: 20 }}>{quickType === "bug" ? "🐞" : "💡"}</Text>
+              <Icon name={TYPE_ICONS[quickType]} size={24} color={TYPE_COLOR[quickType]} />
             </TouchableOpacity>
             <TextInput
               style={{ flex: 1, color: t.text, fontSize: 16, paddingHorizontal: 12, paddingVertical: 10 }}
@@ -627,13 +636,13 @@ function Main() {
               <TouchableOpacity onPress={quickAdd}
                 accessibilityRole="button" accessibilityLabel="Gửi ghi nhanh"
                 style={[st.send, { backgroundColor: t.primary }]}>
-                <Text style={{ color: "#fff", fontSize: 18, fontWeight: "700" }}>↑</Text>
+                <Icon name="send" size={20} color="#fff" />
               </TouchableOpacity>
             ) : (
               <TouchableOpacity onPress={() => newNote(quickType)}
                 accessibilityRole="button" accessibilityLabel="Tạo ghi chú mới"
                 style={[st.send, { backgroundColor: t.card2 }]}>
-                <Text style={{ color: t.text, fontSize: 20 }}>＋</Text>
+                <Icon name="add" size={20} color={t.text} />
               </TouchableOpacity>
             )}
           </View>
@@ -662,7 +671,10 @@ function Main() {
               ))}
               <TouchableOpacity onPress={() => close(() => setProjectForm(""))} accessibilityRole="button"
                 style={[st.addProject, { backgroundColor: t.card2 }]}>
-                <Text style={{ color: t.primary, fontSize: 16, fontWeight: "700" }}>＋ Thêm dự án</Text>
+                <View style={st.textBtn}>
+                  <Icon name="add" size={16} color={t.primary} />
+                  <Text style={{ color: t.primary, fontSize: 16, fontWeight: "700" }}>Thêm dự án</Text>
+                </View>
               </TouchableOpacity>
               {projects.length > 0 && (
                 <Text style={[st.hint, { color: t.sub }]}>Nhấn giữ một dự án để đổi màu, icon.</Text>
@@ -678,12 +690,15 @@ function Main() {
             <>
               {Object.entries(STATUS_FILTERS).map(([k, v]) => (
                 <DropdownItem key={k} t={t} label={v} count={k === "trash" ? trashed.length : 0}
+                  badge={<Icon name={STATUS_ICONS[k]} size={20} color={status === k ? t.primary : t.sub} />}
                   active={status === k} onPress={() => close(() => setStatus(k))} />
               ))}
               <Text style={[st.section, { color: t.sub, borderTopColor: t.card2 }]}>Loại ghi chú</Text>
-              <DropdownItem t={t} label="Mọi loại" active={!type} onPress={() => close(() => setType(""))} />
+              <DropdownItem t={t} label="Mọi loại" active={!type}
+                badge={<Icon name="all" size={20} color={!type ? t.primary : t.sub} />} onPress={() => close(() => setType(""))} />
               {Object.entries(TYPES).map(([k, v]) => (
-                <DropdownItem key={k} t={t} label={v} active={type === k} onPress={() => close(() => setType(k))} />
+                <DropdownItem key={k} t={t} label={v} active={type === k} onPress={() => close(() => setType(k))}
+                  badge={<Icon name={TYPE_ICONS[k]} size={20} color={TYPE_COLOR[k]} />} />
               ))}
             </>
           )}
@@ -732,9 +747,10 @@ function Main() {
 
 const st = StyleSheet.create({
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12 },
-  icon: { fontSize: 22 },
-  search: { borderRadius: 14, paddingHorizontal: 16, paddingVertical: 11, fontSize: 15 },
+  searchIcon: { position: "absolute", left: 14, top: 0, bottom: 0, justifyContent: "center" },
+  search: { borderRadius: 14, paddingLeft: 44, paddingRight: 16, paddingVertical: 11, fontSize: 15 },
   clear: { position: "absolute", right: 14, top: 0, bottom: 0, justifyContent: "center" },
+  textBtn: { flexDirection: "row", alignItems: "center", gap: 6 },
   filterBar: { flexDirection: "row", justifyContent: "space-between", gap: 10, marginTop: 10 },
   filterBtn: { flexDirection: "row", alignItems: "center", flexShrink: 1, paddingHorizontal: 14, minHeight: 44, borderRadius: 22 },
   addProject: { alignItems: "center", padding: 12, borderRadius: 12, marginTop: 6 },

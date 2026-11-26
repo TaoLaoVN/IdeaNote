@@ -1,7 +1,9 @@
 import React from "react";
 import { View, Text, TouchableOpacity, Modal, ScrollView, Image, StyleSheet } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { TYPES, PRIORITIES, STATUSES, fmtDateTime } from "./constants";
+import { TYPES, TYPE_ICONS, TYPE_COLOR, PRIORITIES, STATUSES, fmtDateTime } from "./constants";
+import ProjectBadge from "./ProjectBadge";
+import Icon from "./Icon";
 import { imageUri, hasImage } from "./images";
 
 // Xem ghi chú, không sửa được. Không có onEdit thì ẩn nút Sửa (ghi chú trong thùng rác)
@@ -9,11 +11,16 @@ export default function NoteViewer({ note, look, t, onClose, onEdit }) {
   const checklist = note.checklist || [];
   const images = note.images || [];
   const info = [
-    TYPES[note.type],
-    `Ưu tiên ${PRIORITIES[note.priority]}`,
-    STATUSES[note.status],
-    note.project ? `${look?.icon || "📁"} ${note.project}` : "",
-    note.remind_at ? `⏰ ${fmtDateTime(note.remind_at)}` : "",
+    { text: TYPES[note.type], icon: <Icon name={TYPE_ICONS[note.type]} size={15} color={TYPE_COLOR[note.type]} /> },
+    { text: `Ưu tiên ${PRIORITIES[note.priority]}` },
+    { text: STATUSES[note.status] },
+    note.project && {
+      text: note.project,
+      icon: look?.icon || look?.image
+        ? <ProjectBadge name={note.project} look={look} size={15} />
+        : <Icon name="folder" size={15} color={t.sub} />,
+    },
+    !!note.remind_at && { text: fmtDateTime(note.remind_at), icon: <Icon name="bell" size={15} color={t.sub} /> },
   ].filter(Boolean);
 
   return (
@@ -37,7 +44,10 @@ export default function NoteViewer({ note, look, t, onClose, onEdit }) {
           <Text selectable style={{ color: t.text, fontSize: 22, fontWeight: "800" }}>{note.title}</Text>
           <View style={st.info}>
             {info.map((x) => (
-              <Text key={x} style={[st.tag, { color: t.sub, backgroundColor: t.card2 }]}>{x}</Text>
+              <View key={x.text} style={[st.tag, { backgroundColor: t.card2 }]}>
+                {x.icon}
+                <Text style={{ color: t.sub, fontSize: 13 }}>{x.text}</Text>
+              </View>
             ))}
           </View>
           {!!note.body && <Text selectable style={{ color: t.text, fontSize: 16, lineHeight: 24 }}>{note.body}</Text>}
@@ -45,12 +55,15 @@ export default function NoteViewer({ note, look, t, onClose, onEdit }) {
           {checklist.length > 0 && (
             <View style={{ marginTop: 20 }}>
               {checklist.map((c) => (
-                <Text key={c.id} style={{
-                  color: c.done ? t.sub : t.text, fontSize: 16, marginBottom: 8,
-                  textDecorationLine: c.done ? "line-through" : "none",
-                }}>
-                  {c.done ? "☑" : "☐"}  {c.text}
-                </Text>
+                <View key={c.id} style={st.check}>
+                  <Icon name={c.done ? "checked" : "checkbox"} size={20} color={c.done ? t.ok : t.sub} />
+                  <Text style={{
+                    flex: 1, color: c.done ? t.sub : t.text, fontSize: 16,
+                    textDecorationLine: c.done ? "line-through" : "none",
+                  }}>
+                    {c.text}
+                  </Text>
+                </View>
               ))}
             </View>
           )}
@@ -59,7 +72,7 @@ export default function NoteViewer({ note, look, t, onClose, onEdit }) {
             hasImage(id) ? (
               <Image key={id} source={{ uri: imageUri(id) }} style={st.image} resizeMode="contain" />
             ) : (
-              <Text key={id} style={{ color: t.sub, marginTop: 14 }}>🖼 Ảnh đang tải…</Text>
+              <Text key={id} style={{ color: t.sub, marginTop: 14 }}>Ảnh đang tải…</Text>
             )
           )}
         </ScrollView>
@@ -71,6 +84,7 @@ export default function NoteViewer({ note, look, t, onClose, onEdit }) {
 const st = StyleSheet.create({
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 16, paddingVertical: 14 },
   info: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12, marginBottom: 18 },
-  tag: { fontSize: 13, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10, overflow: "hidden" },
+  tag: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10 },
+  check: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 },
   image: { width: "100%", height: 320, marginTop: 14, borderRadius: 12 },
 });
