@@ -459,8 +459,9 @@ function Main() {
 
       {/* Ghi nhanh: gõ rồi bấm gửi, chi tiết bổ sung sau */}
       {!selecting && status !== "trash" && (
+        // Android bật edge-to-edge nên adjustResize không tự đẩy ô nhập lên: cần padding ở cả hai nền tảng
         <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          behavior="padding"
           style={st.composerWrap}
           pointerEvents="box-none"
         >
