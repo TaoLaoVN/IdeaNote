@@ -3,6 +3,10 @@ export const KEY_SETTINGS = "ideanote:settings";
 // Khoá mới: máy nâng cấp từ bản cũ sẽ tự đồng bộ lại toàn bộ một lần
 export const KEY_SYNC = "ideanote:syncState";
 export const KEY_WIDGET_PROJECT = "ideanote:widgetProject";
+// Dự án tự thêm từ danh sách dự án (giữ lại cả khi chưa có ghi chú nào), chỉ lưu trên máy
+export const KEY_PROJECTS = "ideanote:projects";
+// Màu và icon của từng dự án: { tên: { color, icon, image } }, chỉ lưu trên máy
+export const KEY_PROJECT_LOOKS = "ideanote:projectLooks";
 
 export const TYPES = { bug: "🐞 Bug", idea: "💡 Ý tưởng", improvement: "✨ Cải tiến" };
 export const TYPE_ICON = { bug: "🐞", idea: "💡", improvement: "✨" };
@@ -13,9 +17,12 @@ export const PRIO_RANK = { high: 0, medium: 1, low: 2 };
 
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
-// Màu cố định cho mỗi dự án, suy ra từ tên
+// Màu dự án: dùng màu người dùng chọn, chưa chọn thì suy ra từ tên
 const PALETTE = ["#3b82f6", "#a855f7", "#ec4899", "#14b8a6", "#f97316", "#84cc16", "#06b6d4", "#eab308"];
-export function projectColor(name) {
+export const PROJECT_COLORS = [...PALETTE, "#ef4444", "#6b7280"];
+export const PROJECT_ICONS = ["📱", "💻", "🌐", "🎮", "🛒", "💬", "📷", "🎵", "📚", "💰", "🏥", "🚀", "🔒", "🎨", "⚙️", "🤖"];
+export function projectColor(name, look) {
+  if (look?.color) return look.color;
   if (!name) return "#6b7280";
   let h = 0;
   for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;

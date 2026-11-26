@@ -4,7 +4,7 @@ import { FlexWidget, TextWidget } from "react-native-android-widget";
 const uri = (type, project) =>
   `ideanote://new?type=${type}&project=${encodeURIComponent(project || "")}`;
 
-// Widget: thanh chọn app (bấm để chuyển app kế tiếp) + 2 nút Bug / Ý tưởng
+// Widget: thanh chọn dự án (bấm để chuyển dự án kế tiếp) + 2 nút Bug / Ý tưởng
 export function QuickNoteWidget({ project }) {
   return (
     <FlexWidget
@@ -30,7 +30,7 @@ export function QuickNoteWidget({ project }) {
         }}
       >
         <TextWidget
-          text={`📁 ${project || "Chưa chọn app"}  ▾`}
+          text={`📁 ${project || "Chưa chọn dự án"}  ▾`}
           style={{ fontSize: 14, color: "#ffffff" }}
           maxLines={1}
           truncate="END"

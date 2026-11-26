@@ -1,7 +1,8 @@
 import React, { useState } from "react";
-import { View, Text, TextInput, TouchableOpacity, Modal, ScrollView, Alert, StyleSheet } from "react-native";
+import { View, Text, TextInput, TouchableOpacity, Modal, ScrollView, KeyboardAvoidingView, StyleSheet } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Clipboard from "expo-clipboard";
+import { showDialog } from "./Dialog";
 
 export default function SettingsModal({ settings, notes, t, onSave, onClose, onImport }) {
   const [cfg, setCfg] = useState(settings);
@@ -22,7 +23,7 @@ export default function SettingsModal({ settings, notes, t, onSave, onClose, onI
 
   const backup = async () => {
     await Clipboard.setStringAsync(JSON.stringify(notes.filter((n) => !n.deleted), null, 1));
-    Alert.alert("Đã sao lưu", `${notes.filter((n) => !n.deleted).length} ghi chú đã chép vào clipboard dưới dạng JSON. Dán vào một file ghi chú để giữ.`);
+    showDialog("Đã sao lưu", `${notes.filter((n) => !n.deleted).length} ghi chú đã chép vào clipboard dưới dạng JSON. Dán vào một file ghi chú để giữ.`);
   };
 
   const restore = async () => {
@@ -31,9 +32,9 @@ export default function SettingsModal({ settings, notes, t, onSave, onClose, onI
       if (!Array.isArray(list)) throw new Error();
       const ok = list.filter((n) => n && n.id && n.title);
       onImport(ok);
-      Alert.alert("Đã nhập", `${ok.length} ghi chú từ clipboard.`);
+      showDialog("Đã nhập", `${ok.length} ghi chú từ clipboard.`);
     } catch {
-      Alert.alert("Không nhập được", "Clipboard không chứa bản sao lưu JSON hợp lệ.");
+      showDialog("Không nhập được", "Clipboard không chứa bản sao lưu JSON hợp lệ.");
     }
   };
 
@@ -49,6 +50,7 @@ export default function SettingsModal({ settings, notes, t, onSave, onClose, onI
             <Text style={{ color: t.primary, fontSize: 16, fontWeight: "700" }}>Lưu</Text>
           </TouchableOpacity>
         </View>
+        <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
           <Text style={[st.h, { color: t.text }]}>Đồng bộ điện thoại ↔ PC</Text>
           <Text style={[st.label, { color: t.sub }]}>Địa chỉ server</Text>
@@ -73,6 +75,7 @@ export default function SettingsModal({ settings, notes, t, onSave, onClose, onI
             <Text style={{ color: t.text, fontWeight: "600" }}>Nhập từ clipboard</Text>
           </TouchableOpacity>
         </ScrollView>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </Modal>
   );

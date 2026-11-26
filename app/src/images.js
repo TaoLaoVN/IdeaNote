@@ -46,6 +46,22 @@ export async function fitImage(id) {
   return b64;
 }
 
+// Chọn một ảnh làm icon dự án: cắt vuông, thu còn 128px, trả về data URI (rỗng nếu huỷ)
+export async function pickIcon() {
+  const res = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ["images"],
+    allowsEditing: true,
+    aspect: [1, 1],
+    quality: 1,
+  });
+  if (res.canceled) return "";
+  const ctx = ImageManipulator.manipulate(res.assets[0].uri);
+  ctx.resize({ width: 128, height: 128 });
+  const img = await ctx.renderAsync();
+  const out = await img.saveAsync({ format: SaveFormat.PNG, base64: true });
+  return `data:image/png;base64,${out.base64}`;
+}
+
 // Chọn ảnh từ thư viện, thu nhỏ (rộng tối đa 1280px, JPEG) rồi lưu. Trả về danh sách id.
 export async function pickImages() {
   const res = await ImagePicker.launchImageLibraryAsync({

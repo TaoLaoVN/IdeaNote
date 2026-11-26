@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import {
-  View, Text, TextInput, FlatList, TouchableOpacity, StyleSheet, ScrollView, Alert,
+  View, Text, TextInput, FlatList, TouchableOpacity, StyleSheet,
   StatusBar, Platform, Linking, AppState, RefreshControl, KeyboardAvoidingView, Animated, Easing,
+  BackHandler, LayoutAnimation, useWindowDimensions,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -12,13 +13,18 @@ import { requestWidgetUpdate } from "react-native-android-widget";
 import { QuickNoteWidget } from "./widget/QuickNote";
 import { useTheme } from "./src/theme";
 import {
-  KEY_NOTES, KEY_SETTINGS, KEY_SYNC, KEY_WIDGET_PROJECT, TYPES, PRIO_RANK, TRASH_DAYS, uid, projectColor, buildPrompt,
+  KEY_NOTES, KEY_SETTINGS, KEY_SYNC, KEY_WIDGET_PROJECT, KEY_PROJECTS, KEY_PROJECT_LOOKS, TYPES, PRIO_RANK, TRASH_DAYS, uid, projectColor, buildPrompt,
 } from "./src/constants";
 import { rescheduleReminders } from "./src/reminders";
 import { mergeNotes, syncNotes, saveSyncState } from "./src/sync";
-import { Chip, NoteCard } from "./src/components";
+import { NoteCard } from "./src/components";
 import NoteEditor from "./src/NoteEditor";
 import SettingsModal from "./src/SettingsModal";
+import { showDialog, DialogHost } from "./src/Dialog";
+import NoteViewer from "./src/NoteViewer";
+import ProjectModal from "./src/ProjectModal";
+import ProjectBadge from "./src/ProjectBadge";
+import Dropdown, { DropdownItem } from "./src/Dropdown";
 
 export default function App() {
   return (
@@ -29,6 +35,7 @@ export default function App() {
 }
 
 const NEXT = { new: "doing", doing: "done", done: "new" };
+const STATUS_FILTERS = { open: "Đang mở", done: "Đã xong", all: "Tất cả", trash: "🗑 Thùng rác" };
 
 // Haptics an toàn: bỏ qua lỗi và không làm gì trên web / nền tảng không hỗ trợ
 const haptic = (fn) => {
@@ -40,13 +47,25 @@ const haptic = (fn) => {
   }
 };
 const hapticSelect = () => haptic(() => Haptics.selectionAsync());
-const hapticMedium = () => haptic(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium));
+const hapticLight = () => haptic(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light));
 
 function Main() {
   const t = useTheme();
   const [notes, setNotes] = useState([]);
   const [settings, setSettings] = useState({ url: "", secret: "" });
   const [project, setProject] = useState("");
+  const [added, setAdded] = useState([]); // dự án tự thêm
+  const [looks, setLooks] = useState({}); // màu, icon của từng dự án
+  const [projectForm, setProjectForm] = useState(null); // null = đóng, "" = thêm mới, tên = sửa
+  const [dropdown, setDropdown] = useState(null); // null | { side: "left" | "right", top }
+  const leftBtn = useRef(null);
+  const rightBtn = useRef(null);
+  const [menuId, setMenuId] = useState(""); // ghi chú đang mở hàng nút (nhấn giữ)
+  const touch = useRef({ x: 0, y: 0, inside: false });
+  const listRef = useRef(null);
+  const scrollY = useRef(0);
+  const { height: screenHeight } = useWindowDimensions();
+  const [viewingId, setViewingId] = useState("");
   const [status, setStatus] = useState("open"); // open | done | all
   const [type, setType] = useState("");
   const [query, setQuery] = useState("");
@@ -102,7 +121,12 @@ function Main() {
   // Nạp dữ liệu lúc mở app
   useEffect(() => {
     (async () => {
-      const [n, s] = await Promise.all([AsyncStorage.getItem(KEY_NOTES), AsyncStorage.getItem(KEY_SETTINGS)]);
+      const [n, s, a, l] = await Promise.all([
+        AsyncStorage.getItem(KEY_NOTES), AsyncStorage.getItem(KEY_SETTINGS), AsyncStorage.getItem(KEY_PROJECTS),
+        AsyncStorage.getItem(KEY_PROJECT_LOOKS),
+      ]);
+      if (l) setLooks(JSON.parse(l));
+      if (a) setAdded(JSON.parse(a));
       if (n) commit((cur) => mergeNotes(JSON.parse(n), cur));
       if (s) setSettings(JSON.parse(s));
       readyRef.current = true;
@@ -114,6 +138,13 @@ function Main() {
   useEffect(() => {
     if (ready) AsyncStorage.setItem(KEY_NOTES, JSON.stringify(notes));
   }, [notes, ready]);
+
+  useEffect(() => {
+    if (ready) AsyncStorage.setItem(KEY_PROJECTS, JSON.stringify(added));
+  }, [added, ready]);
+  useEffect(() => {
+    if (ready) AsyncStorage.setItem(KEY_PROJECT_LOOKS, JSON.stringify(looks));
+  }, [looks, ready]);
 
   // Đặt lại lịch nhắc khi ghi chú đổi
   useEffect(() => {
@@ -169,13 +200,18 @@ function Main() {
   }, [doSync]);
 
   const projects = useMemo(() => {
-    const count = {};
-    notes.forEach((n) => { if (!n.deleted && n.project) count[n.project] = (count[n.project] || 0) + (n.status === "done" ? 0 : 1); });
-    return Object.keys(count).sort((a, b) => count[b] - count[a]).map((name) => ({ name, open: count[name] }));
-  }, [notes]);
+    const info = new Map();
+    notes.forEach((n) => {
+      if (n.deleted || !n.project) return;
+      const cur = info.get(n.project) || { open: 0, total: 0 };
+      info.set(n.project, { open: cur.open + (n.status === "done" ? 0 : 1), total: cur.total + 1 });
+    });
+    added.forEach((name) => { if (!info.has(name)) info.set(name, { open: 0, total: 0 }); });
+    return [...info].map(([name, v]) => ({ name, ...v })).sort((a, b) => b.open - a.open);
+  }, [notes, added]);
   const projectNames = useMemo(() => projects.map((p) => p.name), [projects]);
 
-  // Làm mới widget khi danh sách app đổi
+  // Làm mới widget khi danh sách dự án đổi
   const projectsKey = projectNames.join("|");
   useEffect(() => {
     if (!ready || Platform.OS !== "android") return;
@@ -211,7 +247,81 @@ function Main() {
   const openCount = live.filter((n) => n.status !== "done").length;
   const highBugs = live.filter((n) => n.status !== "done" && n.type === "bug" && n.priority === "high").length;
 
+  const viewingNote = notes.find((x) => x.id === viewingId);
+
   // ----- thao tác -----
+  // Đo vị trí nút để hộp xổ ra ngay bên dưới
+  const openDropdown = (side, ref) => {
+    ref.current?.measureInWindow((x, y, w, h) => setDropdown({ side, top: y + h + 6 }));
+  };
+
+  const showActions = useCallback((id) => {
+    LayoutAnimation.configureNext(LayoutAnimation.create(160, "easeInEaseOut", "opacity"));
+    setMenuId(id);
+  }, []);
+
+  // Chạm ra ngoài card đang mở thì ẩn hàng nút. Sự kiện chạm đi từ card lên khung gốc,
+  // nên card đang mở đánh dấu "bên trong" trước. Ngón tay di chuyển là đang cuộn, không tính
+  const onRootTouchStart = (e) => {
+    touch.current = { x: e.nativeEvent.pageX, y: e.nativeEvent.pageY, inside: false };
+  };
+  const onRootTouchEnd = (e) => {
+    const { x, y, inside } = touch.current;
+    const moved = Math.abs(e.nativeEvent.pageX - x) > 10 || Math.abs(e.nativeEvent.pageY - y) > 10;
+    if (menuId && !inside && !moved) showActions("");
+  };
+
+  // Nút Back đóng hàng nút trước khi thoát app
+  useEffect(() => {
+    if (!menuId) return undefined;
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      showActions("");
+      return true;
+    });
+    return () => sub.remove();
+  }, [menuId, showActions]);
+
+  // Card ở cuối màn hình: cuộn thêm để hàng nút không nằm sau thanh ghi nhanh
+  const revealActions = (view) => {
+    if (!view) return;
+    view.measureInWindow((x, y, w, h) => {
+      const over = y + h - (screenHeight - 140);
+      if (over > 0) listRef.current?.scrollToOffset({ offset: scrollY.current + over, animated: true });
+    });
+  };
+
+  const saveProject = (name, look) => {
+    if (projectForm) {
+      setLooks((cur) => ({ ...cur, [projectForm]: look }));
+    } else {
+      // Trùng tên (không phân biệt hoa thường) thì chọn dự án đã có, giữ nguyên kiểu cũ
+      const found = projectNames.find((x) => x.toLowerCase() === name.toLowerCase());
+      if (!found) {
+        setAdded((cur) => [...cur, name]);
+        setLooks((cur) => ({ ...cur, [name]: look }));
+      }
+      setProject(found || name);
+    }
+    setProjectForm(null);
+  };
+
+  // Chỉ xoá được dự án chưa có ghi chú nào (ví dụ gõ nhầm tên)
+  const removeProject = (p) => {
+    if (p.total) return;
+    showDialog("Xoá dự án này?", p.name, [
+      { text: "Huỷ", style: "cancel" },
+      {
+        text: "Xoá", style: "destructive",
+        onPress: () => {
+          setAdded((cur) => cur.filter((x) => x !== p.name));
+          setLooks((cur) => Object.fromEntries(Object.entries(cur).filter(([k]) => k !== p.name)));
+          setProjectForm(null);
+          setProject((cur) => (cur === p.name ? "" : cur));
+        },
+      },
+    ]);
+  };
+
   const save = (n) => {
     const next = { ...n, updated_at: Date.now() };
     const prev = notes.find((x) => x.id === n.id);
@@ -283,11 +393,11 @@ function Main() {
       try {
         proj = pm ? decodeURIComponent(pm[1]) : undefined;
       } catch {
-        proj = undefined; // link hỏng thì bỏ qua tên app
+        proj = undefined; // link hỏng thì bỏ qua tên dự án
       }
       const start = () => newNoteRef.current(tm ? tm[1] : "bug", proj);
       if (!editingRef.current) return start();
-      Alert.alert("Đang soạn dở một ghi chú", "Tạo ghi chú mới sẽ bỏ phần chưa lưu.", [
+      showDialog("Đang soạn dở một ghi chú", "Tạo ghi chú mới sẽ bỏ phần chưa lưu.", [
         { text: "Soạn tiếp", style: "cancel" },
         { text: "Bỏ và tạo mới", style: "destructive", onPress: start },
       ]);
@@ -306,16 +416,37 @@ function Main() {
       return nx;
     });
 
+  const copyOne = async (n) => {
+    await Clipboard.setStringAsync(buildPrompt([n]));
+    showDialog("Đã chép", "Dán vào Claude Code để xử lý mục này.");
+  };
+
+  const menuItems = (n) => {
+    // Bấm nút nào thì đóng hàng nút trước rồi mới làm việc
+    const item = (icon, label, run, danger) => ({ icon, label, danger, onPress: () => { showActions(""); run(); } });
+    const view = item("👁", "Xem", () => setViewingId(n.id));
+    if (status === "trash") return [view, item("♻️", "Khôi phục", () => setDeleted(n.id, false))];
+    const done = n.status === "done";
+    return [
+      view,
+      item("✏️", "Sửa", () => setEditing(n)),
+      item(done ? "↩️" : "✅", done ? "Mở lại" : "Xong", () => save({ ...n, status: done ? "new" : "done" })),
+      item("📋", "Chép", () => copyOne(n)),
+      item("☑️", "Chọn", () => toggleSelect(n.id)),
+      item("🗑", "Xoá", () => remove(n), true),
+    ];
+  };
+
   const copyPrompt = async () => {
     const list = selecting ? visible.filter((n) => selected.has(n.id)) : visible.filter((n) => n.status !== "done");
-    if (!list.length) return Alert.alert("Không có ghi chú nào để chép");
+    if (!list.length) return showDialog("Không có ghi chú nào để chép");
     await Clipboard.setStringAsync(buildPrompt(list));
     setSelected(new Set());
-    Alert.alert("Đã chép", `${list.length} ghi chú đã vào clipboard. Dán vào Claude Code.`);
+    showDialog("Đã chép", `${list.length} ghi chú đã vào clipboard. Dán vào Claude Code.`);
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }} onTouchStart={onRootTouchStart} onTouchEnd={onRootTouchEnd}>
       <StatusBar barStyle={t.dark ? "light-content" : "dark-content"} backgroundColor={t.bg} />
 
       {/* Header */}
@@ -384,24 +515,23 @@ function Main() {
             </TouchableOpacity>
           )}
         </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 10 }}>
-          <Chip t={t} label="Tất cả app" active={!project} onPress={() => setProject("")} />
-          {projects.map((p) => (
-            <Chip key={p.name} t={t} label={`${p.name}${p.open ? ` · ${p.open}` : ""}`} color={projectColor(p.name)}
-              active={project === p.name} onPress={() => setProject(project === p.name ? "" : p.name)} />
-          ))}
-        </ScrollView>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <Chip t={t} small label="Đang mở" active={status === "open"} onPress={() => setStatus("open")} />
-          <Chip t={t} small label="Đã xong" active={status === "done"} onPress={() => setStatus("done")} />
-          <Chip t={t} small label="Tất cả" active={status === "all"} onPress={() => setStatus("all")} />
-          <Chip t={t} small label={`🗑 Thùng rác${trashed.length ? ` · ${trashed.length}` : ""}`} active={status === "trash"} onPress={() => setStatus("trash")} />
-          <View style={{ width: 12 }} />
-          <Chip t={t} small label="Mọi loại" active={!type} onPress={() => setType("")} />
-          {Object.entries(TYPES).map(([k, v]) => (
-            <Chip key={k} t={t} small label={v} active={type === k} onPress={() => setType(type === k ? "" : k)} />
-          ))}
-        </ScrollView>
+        <View style={st.filterBar}>
+          <TouchableOpacity ref={leftBtn} onPress={() => openDropdown("left", leftBtn)} style={[st.filterBtn, { backgroundColor: t.card2 }]}
+            accessibilityRole="button" accessibilityLabel={`Chọn dự án, đang chọn ${project || "tất cả dự án"}`}>
+            {!!project && <View style={{ marginRight: 6 }}><ProjectBadge name={project} look={looks[project]} size={20} /></View>}
+            <Text style={{ color: t.text, fontSize: 14, fontWeight: "600", flexShrink: 1 }} numberOfLines={1}>
+              {project || "Tất cả dự án"}
+            </Text>
+            <Text style={{ color: t.sub, fontSize: 13, marginLeft: 8 }}>▼</Text>
+          </TouchableOpacity>
+          <TouchableOpacity ref={rightBtn} onPress={() => openDropdown("right", rightBtn)} style={[st.filterBtn, { backgroundColor: t.card2 }]}
+            accessibilityRole="button" accessibilityLabel={`Chọn trạng thái, đang chọn ${STATUS_FILTERS[status]}`}>
+            <Text style={{ color: t.text, fontSize: 14, fontWeight: "600", flexShrink: 1 }} numberOfLines={1}>
+              {STATUS_FILTERS[status]}{type && status !== "trash" ? ` · ${TYPES[type]}` : ""}
+            </Text>
+            <Text style={{ color: t.sub, fontSize: 13, marginLeft: 8 }}>▼</Text>
+          </TouchableOpacity>
+        </View>
       </View>
       {!!banner && (
         <View
@@ -415,6 +545,9 @@ function Main() {
 
       {/* Danh sách */}
       <FlatList
+        ref={listRef}
+        onScroll={(e) => { scrollY.current = e.nativeEvent.contentOffset.y; }}
+        scrollEventThrottle={32}
         data={visible}
         keyExtractor={(n) => n.id}
         contentContainerStyle={{ padding: 16, paddingBottom: 110 }}
@@ -430,17 +563,22 @@ function Main() {
         }
         renderItem={({ item }) => (
           <NoteCard
-            note={item} t={t} selecting={selecting} selected={selected.has(item.id)}
+            note={item} t={t} look={looks[item.project]} selecting={selecting} selected={selected.has(item.id)}
             trash={status === "trash"}
+            actions={menuId === item.id ? menuItems(item) : null}
+            onActionsShown={revealActions}
+            onTouchEnd={menuId === item.id ? () => { touch.current.inside = true; } : undefined}
             onPress={() =>
-              status === "trash"
-                ? Alert.alert("Khôi phục ghi chú?", item.title, [{ text: "Huỷ" }, { text: "Khôi phục", onPress: () => setDeleted(item.id, false) }])
+              // Đang mở hàng nút thì chạm card nào cũng chỉ đóng lại
+              menuId ? showActions("")
+              : status === "trash"
+                ? showDialog("Khôi phục ghi chú?", item.title, [{ text: "Huỷ", style: "cancel" }, { text: "Khôi phục", onPress: () => setDeleted(item.id, false) }])
                 : selecting ? toggleSelect(item.id) : setEditing(item)
             }
             onLongPress={() => {
-              if (status === "trash") return;
-              if (!selecting) hapticMedium();
-              toggleSelect(item.id);
+              hapticLight();
+              if (selecting) toggleSelect(item.id);
+              else showActions(menuId === item.id ? "" : item.id);
             }}
             onToggle={() => toggle(item)}
           />
@@ -504,9 +642,67 @@ function Main() {
 
       {editing && (
         <NoteEditor
-          key={editing.id} note={editing} projects={projectNames} t={t}
+          key={editing.id} note={editing} projects={projectNames} looks={looks} t={t}
           onSave={save} onCancel={() => setEditing(null)}
           onDelete={notes.some((x) => x.id === editing.id) ? () => remove(editing) : null}
+        />
+      )}
+
+      {dropdown?.side === "left" && (
+        <Dropdown side="left" top={dropdown.top} t={t} onClose={() => setDropdown(null)}>
+          {(close) => (
+            <>
+              <DropdownItem t={t} label="Tất cả dự án" count={openCount} active={!project}
+                onPress={() => close(() => setProject(""))} />
+              {projects.map((p) => (
+                <DropdownItem key={p.name} t={t} label={p.name} count={p.open}
+                  badge={<ProjectBadge name={p.name} look={looks[p.name]} />}
+                  active={project === p.name} onPress={() => close(() => setProject(p.name))}
+                  onLongPress={hapticLight} onHoldRelease={() => close(() => setProjectForm(p.name))} />
+              ))}
+              <TouchableOpacity onPress={() => close(() => setProjectForm(""))} accessibilityRole="button"
+                style={[st.addProject, { backgroundColor: t.card2 }]}>
+                <Text style={{ color: t.primary, fontSize: 16, fontWeight: "700" }}>＋ Thêm dự án</Text>
+              </TouchableOpacity>
+              {projects.length > 0 && (
+                <Text style={[st.hint, { color: t.sub }]}>Nhấn giữ một dự án để đổi màu, icon.</Text>
+              )}
+            </>
+          )}
+        </Dropdown>
+      )}
+
+      {dropdown?.side === "right" && (
+        <Dropdown side="right" top={dropdown.top} t={t} onClose={() => setDropdown(null)}>
+          {(close) => (
+            <>
+              {Object.entries(STATUS_FILTERS).map(([k, v]) => (
+                <DropdownItem key={k} t={t} label={v} count={k === "trash" ? trashed.length : 0}
+                  active={status === k} onPress={() => close(() => setStatus(k))} />
+              ))}
+              <Text style={[st.section, { color: t.sub, borderTopColor: t.card2 }]}>Loại ghi chú</Text>
+              <DropdownItem t={t} label="Mọi loại" active={!type} onPress={() => close(() => setType(""))} />
+              {Object.entries(TYPES).map(([k, v]) => (
+                <DropdownItem key={k} t={t} label={v} active={type === k} onPress={() => close(() => setType(k))} />
+              ))}
+            </>
+          )}
+        </Dropdown>
+      )}
+
+      {viewingNote && (
+        <NoteViewer
+          note={viewingNote} look={looks[viewingNote.project]} t={t} onClose={() => setViewingId("")}
+          onEdit={viewingNote.deleted ? null : () => { setViewingId(""); setEditing(viewingNote); }}
+        />
+      )}
+
+      {projectForm !== null && (
+        <ProjectModal
+          t={t} editName={projectForm} initialLook={looks[projectForm]}
+          onSave={saveProject} onClose={() => setProjectForm(null)}
+          onDelete={projects.some((p) => p.name === projectForm && !p.total)
+            ? () => removeProject(projects.find((p) => p.name === projectForm)) : null}
         />
       )}
 
@@ -528,6 +724,8 @@ function Main() {
           }}
         />
       )}
+
+      <DialogHost t={t} />
     </SafeAreaView>
   );
 }
@@ -537,6 +735,11 @@ const st = StyleSheet.create({
   icon: { fontSize: 22 },
   search: { borderRadius: 14, paddingHorizontal: 16, paddingVertical: 11, fontSize: 15 },
   clear: { position: "absolute", right: 14, top: 0, bottom: 0, justifyContent: "center" },
+  filterBar: { flexDirection: "row", justifyContent: "space-between", gap: 10, marginTop: 10 },
+  filterBtn: { flexDirection: "row", alignItems: "center", flexShrink: 1, paddingHorizontal: 14, minHeight: 44, borderRadius: 22 },
+  addProject: { alignItems: "center", padding: 12, borderRadius: 12, marginTop: 6 },
+  hint: { fontSize: 11, textAlign: "center", marginTop: 8, marginBottom: 2 },
+  section: { fontSize: 13, fontWeight: "600", borderTopWidth: 1, marginTop: 6, paddingTop: 10, marginBottom: 4, paddingHorizontal: 12 },
   banner: { marginHorizontal: 16, marginTop: 6, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 10 },
   bannerText: { color: "#fff", fontSize: 13, fontWeight: "600" },
   snack: { position: "absolute", left: 16, right: 16, bottom: 84, flexDirection: "row", alignItems: "center", padding: 14, borderRadius: 14 },

@@ -1,13 +1,14 @@
 import React, { useState } from "react";
-import { View, Text, TextInput, TouchableOpacity, Modal, ScrollView, KeyboardAvoidingView, Alert, Image, StyleSheet } from "react-native";
+import { View, Text, TextInput, TouchableOpacity, Modal, ScrollView, KeyboardAvoidingView, Image, StyleSheet } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Clipboard from "expo-clipboard";
 import { TYPES, PRIORITIES, STATUSES, PRIO_COLOR, projectColor, buildPrompt, uid, fmtDateTime } from "./constants";
 import { pickImages, imageUri, hasImage } from "./images";
 import { ensureReminderPermission } from "./reminders";
 import { Chip, Segment } from "./components";
+import { showDialog } from "./Dialog";
 
-export default function NoteEditor({ note, projects, t, onSave, onCancel, onDelete }) {
+export default function NoteEditor({ note, projects, looks, t, onSave, onCancel, onDelete }) {
   const [n, setN] = useState(note);
   const set = (patch) => setN({ ...n, ...patch });
   const canSave = n.title.trim().length > 0;
@@ -15,7 +16,7 @@ export default function NoteEditor({ note, projects, t, onSave, onCancel, onDele
 
   const copyPrompt = async () => {
     await Clipboard.setStringAsync(buildPrompt([{ ...n, title: n.title.trim() || "(chưa có tiêu đề)" }]));
-    Alert.alert("Đã chép", "Dán vào Claude Code để xử lý mục này.");
+    showDialog("Đã chép", "Dán vào Claude Code để xử lý mục này.");
   };
 
   const checklist = n.checklist || [];
@@ -34,18 +35,18 @@ export default function NoteEditor({ note, projects, t, onSave, onCancel, onDele
       const ids = await pickImages();
       if (ids.length) set({ images: [...images, ...ids] });
     } catch (e) {
-      Alert.alert("Không thêm được ảnh", String(e.message || e));
+      showDialog("Không thêm được ảnh", String(e.message || e));
     }
   };
   const removeImage = (id) =>
-    Alert.alert("Bỏ ảnh này khỏi ghi chú?", "", [
-      { text: "Huỷ" },
+    showDialog("Bỏ ảnh này khỏi ghi chú?", "", [
+      { text: "Huỷ", style: "cancel" },
       { text: "Bỏ ảnh", style: "destructive", onPress: () => set({ images: images.filter((x) => x !== id) }) },
     ]);
 
   const setReminder = async (ms) => {
     if (ms && !(await ensureReminderPermission())) {
-      Alert.alert("Chưa được phép gửi thông báo", "Hãy bật thông báo cho IdeaNote trong cài đặt điện thoại để nhận nhắc việc.");
+      showDialog("Chưa được phép gửi thông báo", "Hãy bật thông báo cho IdeaNote trong cài đặt điện thoại để nhận nhắc việc.");
     }
     set({ remind_at: ms });
   };
@@ -77,7 +78,7 @@ export default function NoteEditor({ note, projects, t, onSave, onCancel, onDele
           </TouchableOpacity>
         </View>
 
-        <KeyboardAvoidingView style={{ flex: 1 }}>
+        <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
           <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
             <Segment t={t} options={TYPES} value={n.type} onChange={(type) => set({ type })} />
 
@@ -161,10 +162,10 @@ export default function NoteEditor({ note, projects, t, onSave, onCancel, onDele
               {!!n.remind_at && <Chip t={t} label="Tắt nhắc" color={t.danger} active onPress={() => setReminder(0)} />}
             </View>
 
-            <Text style={[st.label, { color: t.sub }]}>App / game</Text>
+            <Text style={[st.label, { color: t.sub }]}>Dự án</Text>
             <TextInput
               style={input}
-              placeholder="Gõ tên app hoặc chọn bên dưới"
+              placeholder="Gõ tên dự án hoặc chọn bên dưới"
               placeholderTextColor={t.sub}
               value={n.project}
               onChangeText={(project) => set({ project })}
@@ -172,7 +173,7 @@ export default function NoteEditor({ note, projects, t, onSave, onCancel, onDele
             {projects.length > 0 && (
               <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 14 }}>
                 {projects.map((p) => (
-                  <Chip key={p} t={t} label={p} color={projectColor(p)} active={n.project === p} onPress={() => set({ project: p })} />
+                  <Chip key={p} t={t} label={looks[p]?.icon ? `${looks[p].icon} ${p}` : p} color={projectColor(p, looks[p])} active={n.project === p} onPress={() => set({ project: p })} />
                 ))}
               </View>
             )}

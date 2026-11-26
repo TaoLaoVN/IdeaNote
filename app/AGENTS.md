@@ -29,6 +29,19 @@ Run lint and typecheck before declaring any task done.
 - Import `Link`, `router`, and `useLocalSearchParams` from `expo-router`.
 - Docs: https://docs.expo.dev/router/introduction.md
 
+## Quy tắc UI/UX
+
+### Bàn phím không được che nội dung đang nhập
+
+Áp dụng cho mọi `TextInput`, kể cả ô mới thêm: khi bàn phím mở, người dùng phải thấy được ô đang nhập và ký tự đang gõ.
+
+- Dự án bật edge-to-edge trên Android (`edgeToEdgeEnabled=true`), nên `adjustResize` không tự đẩy giao diện lên. Đừng dựa vào nó.
+- Dùng `KeyboardAvoidingView` với `behavior="padding"` cho **cả Android và iOS**. Không để `behavior` trống hoặc `undefined`.
+- Form dài hoặc màn hình trong `Modal`: bọc `ScrollView` bằng `KeyboardAvoidingView style={{ flex: 1 }}` (header để bên ngoài), và đặt `keyboardShouldPersistTaps="handled"`.
+- Thanh nhập ghim ở đáy: `KeyboardAvoidingView` là khung `position: "absolute", bottom: 0` chứa thanh nhập (xem thanh ghi nhanh trong `App.js`).
+- Hộp thoại có ô nhập: bọc bằng `KeyboardAvoidingView`, phần thân cuộn được, nút bấm nằm ngoài vùng cuộn (xem `src/ProjectModal.js`).
+- Khi thêm hoặc sửa ô nhập, thử với bàn phím ảo đang mở, nhất là ô nằm thấp nhất màn hình, rồi ẩn bàn phím để chắc bố cục trở về như cũ.
+
 ## Building with EAS
 
 Use EAS to build, sign, and submit the app in the cloud (`eas build`, `eas submit`) and to ship over-the-air updates (`eas update`) — no local Xcode or Android Studio required. Run EAS CLI as `bunx eas-cli <command>` in Bun projects, or `npx eas-cli@latest <command>` otherwise; substitute that for bare `eas` in docs examples.
